@@ -1,5 +1,6 @@
 use std::convert::TryInto;
 use std::iter::Map;
+use std::thread::current;
 use crate::external::query_price;
 use crate::types::{CoinConfig, PoolConfig, UserBorrowingInfo, UserLendingInfo};
 use std::ops::Sub
@@ -11,14 +12,14 @@ use std::ops::Sub
 // User can close their borrowing position anytime before the maturity date, (if not closed before maturity -> liquidation of collateral).
 
 use cosmwasm_std::{
-    entry_point, Addr, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response,  Timestamp, Uint128
+    entry_point, Addr, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response,  Timestamp, Uint128, Uint256
 };
 // use oracle::msg::PriceResponse;
 
 use crate::error::{ContractError, ContractResult};
 use crate::msg::{ InstantiateMsg, QueryMsg, TransactMsg};
 
-use crate::state::{ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, INTEREST_EARNED, NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE, USERS_BORROWING_INFOS, USERS_LENDING_INFOS};
+use crate::state::{ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, PRINCIPLE_TO_REPAY , COLLATERAL_SUBMITTED, INTEREST_EARNED, INTEREST_TO_REPAY, NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE, USERS_BORROWING_INFOS, USERS_LENDING_INFOS};
 use crate::query::query_handler;
 
 
@@ -205,7 +206,6 @@ fn withdraw(
 }
 
 
-// TODO: a function that let's user transfer all the interest earned to their account
 fn withdraw_interest(
     mut deps: DepsMut,
     env: Env,
@@ -224,6 +224,198 @@ fn withdraw_interest(
     };
     Ok(Response::new().add_message(bank_msg))
 }
+
+
+
+fn borrow(
+    mut deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    amount: Uint128,
+) -> ContractResult<Response> {
+    
+    let pool_config:PoolConfig = POOL_CONFIG.load(deps.storage)?;
+    let now = env.block.time;
+    
+    if now > pool_config.pool_maturation_date {return Err(ContractError::PoolMatured {});}
+    
+    let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
+    let mut total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage)?;
+    
+    let amount_to_borrow = amount;
+
+    if total_asset_available < amount_to_borrow { return Err(ContractError::InsufficientFunds {}); }
+    
+    let asset_config:CoinConfig = ASSET_CONFIG.load(deps.storage)?;
+    let collateral_config:CoinConfig = COLLATERAL_CONFIG.load(deps.storage)?;
+    let collateral_submitted_map : Map<&Addr, (Uint128,Timestamp)> = COLLATERAL_SUBMITTED.load(deps.storage)?;
+    let principle_to_repay_map :  Map<&Addr, (Uint128,Timestamp)> = PRINCIPLE_TO_REPAY.load(deps.storage)?;
+    let interest_to_repay_map : Map<&Addr, Uint128> = INTEREST_TO_REPAY.load(deps.storage)?;  
+
+    let interest_to_repay_by_user = interest_to_repay_map.get(&info.sender).unwrap_or_default();
+    let principle_to_repay_by_user_reply : (Uint128, Timestamp) = principle_to_repay_map.get(&info.sender).unwrap_or_default();
+    let collateral_submitted_by_user_reply: (Uint128, Timestamp) = collateral_submitted_map.get(&info.sender).unwrap_or_default();
+
+
+    let principle_to_repay_by_user = principle_to_repay_by_user_reply.0;
+    let last_deposit_time = principle_to_repay_by_user_reply.1;
+
+    let collateral_submitted_by_user = collateral_submitted_by_user_reply.0;
+    let last_deposit_time_collateral = collateral_submitted_by_user_reply.1;
+
+    if last_deposit_time != last_deposit_time_collateral { return Err(ContractError::InvalidState {}); }
+    if principle_to_repay_by_user == Uint128::zero() && interest_to_repay_by_user == Uint128::zero() && collateral_submitted_by_user == Uint128::zero() { return Err(ContractError::PositionNotAvailable {}); }
+    
+    let collateral_amount_sent = info.funds.iter().find(|coin| coin.denom == collateral_config.denom).unwrap().amount;
+
+    // calculations will be based on the amount to be borrowed.
+
+    // figuring out ocf.
+    let strike = pool_config.pool_strike_price; // strike = collateral / asset
+    let current_ocf = pool_config.min_overcollateralization_factor;
+
+    if current_ocf < 1 { return Err(ContractError::InsufficientOCF {}); }
+
+    // x gold = amount of usdc * strike * ocf
+    let needed_collateral: Uint128 = amount_to_borrow * strike * current_ocf;
+    if collateral_amount_sent < needed_collateral { return Err(ContractError::InsufficientCollateral {});}
+    
+    let time_period = get_time_period(now, last_deposit_time);
+    let interest_on_current_principle = calculate_simple_interest(principle_to_repay_by_user, pool_config.pool_debt_interest_rate, time_period);
+    
+    // update user's interest on current loan
+    INTEREST_TO_REPAY.save(deps.storage, &info.sender, &interest_to_repay_by_user + interest_on_current_principle);
+
+    // update user's loan
+    PRINCIPLE_TO_REPAY.save(deps.storage, &info.sender, (&principle_to_repay_by_user + amount_to_borrow, now));
+
+    // update user's collateral
+    COLLATERAL_SUBMITTED.save(deps.storage, &info.sender, (&collateral_submitted_by_user + needed_collateral, now));
+
+    // update total asset available in the pool
+    TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available - amount_to_borrow);
+    // update total collateral available in the pool
+    TOTAL_COLLATERAL_AVAILABLE.save(deps.storage, &total_collateral_available + needed_collateral);
+
+    // send the funds to the user, 
+    // send the amount of asset that they wanted to borrow
+    // send the amount of collateral that they will have left after -> collateral_amount_sent - needed_collateral
+    // TODO: ensure that this is not sending collateral tokens out of the blue. this is to minimise the dust positions
+    let bank_msg = BankMsg::Send {
+        to_address: info.sender.to_string(),
+        amount: vec![
+            Coin {
+                denom: asset_config.denom.to_string(),
+                amount: amount_to_borrow,
+            },
+            Coin {
+                denom: collateral_config.denom.to_string(),
+                amount: collateral_amount_sent - needed_collateral,
+            },
+        ],
+    };
+
+    Ok(Response::new().add_message(bank_msg))
+}
+
+fn repay(
+    mut deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+) -> ContractResult<Response> {
+    
+    let pool_config:PoolConfig = POOL_CONFIG.load(deps.storage)?;
+    let now = env.block.time;
+    
+    if now > pool_config.pool_maturation_date {return Err(ContractError::CollateralForfeited {});}
+    
+    let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
+    let mut total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage)?;
+    
+    
+    let asset_config:CoinConfig = ASSET_CONFIG.load(deps.storage)?;
+    let collateral_config:CoinConfig = COLLATERAL_CONFIG.load(deps.storage)?;
+   
+    let amount_to_repay = info.funds.iter().find(|coin| coin.denom == asset_config.denom).unwrap().amount;
+   
+    let collateral_submitted_map : Map<&Addr, (Uint128,Timestamp)> = COLLATERAL_SUBMITTED.load(deps.storage)?;
+    let principle_to_repay_map :  Map<&Addr, (Uint128,Timestamp)> = PRINCIPLE_TO_REPAY.load(deps.storage)?;
+    let interest_to_repay_map : Map<&Addr, Uint128> = INTEREST_TO_REPAY.load(deps.storage)?;  
+
+    let interest_to_repay_by_user = interest_to_repay_map.get(&info.sender).unwrap_or_default();
+    let principle_to_repay_by_user_reply : (Uint128, Timestamp) = principle_to_repay_map.get(&info.sender).unwrap_or_default();
+    
+    let collateral_submitted_by_user_reply: (Uint128, Timestamp) = collateral_submitted_map.get(&info.sender).unwrap_or_default();
+    
+    let principle_to_repay_by_user = principle_to_repay_by_user_reply.0;
+    let last_deposit_time = principle_to_repay_by_user_reply.1;
+
+    if interest_to_repay_by_user == Uint128::zero() && principle_to_repay_by_user == Uint128::zero() { return Err(ContractError::PositionNotAvailable {}); }
+    
+    let collateral_submitted_by_user = collateral_submitted_by_user_reply.0;
+    let last_deposit_time_collateral = collateral_submitted_by_user_reply.1;
+
+    if last_deposit_time != last_deposit_time_collateral { return Err(ContractError::InvalidState {}); }
+    if principle_to_repay_by_user == Uint128::zero() && interest_to_repay_by_user == Uint128::zero() && collateral_submitted_by_user == Uint128::zero() { return Err(ContractError::PositionNotAvailable {}); }
+    
+    let time_period = get_time_period(now, last_deposit_time);
+    let interest_on_current_principle = calculate_simple_interest(principle_to_repay_by_user, pool_config.pool_debt_interest_rate, time_period);
+    
+    // update user's interest on current loan
+    INTEREST_TO_REPAY.save(deps.storage, &info.sender, &interest_to_repay_by_user + interest_on_current_principle);
+
+    // calculations will be based on the amount to be repayed.
+
+    // figuring out ocf.
+    let strike = pool_config.pool_strike_price; // strike = collateral / asset
+    let current_ocf = pool_config.min_overcollateralization_factor;
+
+    if current_ocf < 1 { return Err(ContractError::InsufficientOCF {}); }
+
+    // x gold = amount of usdc * strike * ocf
+    // TODO: Validate, asking user each time they withdraw, to give accumulated interest as well.
+    let needed_collateral: Uint128 = (amount_to_repay + &interest_to_repay_by_user + interest_on_current_principle ) * strike * current_ocf;
+    if collateral_submitted_by_user < needed_collateral { return Err(ContractError::InvalidState {});}
+
+    INTEREST_TO_REPAY.save(deps.storage, &info.sender, &Uint128::zero());
+
+    // TODO: possibility of frontrunning
+    // update user's loan
+    PRINCIPLE_TO_REPAY.save(deps.storage, &info.sender, (&principle_to_repay_by_user - amount_to_repay, now));
+
+    // update user's collateral
+    COLLATERAL_SUBMITTED.save(deps.storage, &info.sender, (&collateral_submitted_by_user - needed_collateral, now));
+
+    // update total asset available in the pool
+    TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available - amount_to_repay);
+    // update total collateral available in the pool
+    TOTAL_COLLATERAL_AVAILABLE.save(deps.storage, &total_collateral_available - needed_collateral);
+
+    // send the funds to the user, 
+    let bank_msg = BankMsg::Send {
+        to_address: info.sender.to_string(),
+        amount: vec![
+            Coin {
+                denom: collateral_config.denom.to_string(),
+                amount: needed_collateral,
+            },
+        ],
+    };
+    Ok(Response::new().add_message(bank_msg))
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 // TODO : verify this with madhav
@@ -316,7 +508,7 @@ fn withdraw2(
 // 12) update the total asset amount in the pool (will become lesser)
 // 13) send the sender the amount of asset that they wanted to borrow
 // 14) return the response
-fn borrow(
+fn borrow2(
     mut deps: DepsMut,
     env: Env,
     info: MessageInfo,

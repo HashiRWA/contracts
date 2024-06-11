@@ -21,6 +21,21 @@ pub enum ContractError {
     #[error("excessive funds")]
     ExcessiveFunds {},
 
+    #[error("pool expired and collateral forfeited")]
+    CollateralForfeited {},
+
+
+    #[error("invalid state")]
+    InvalidState {},
+
+
+    #[error("invalid asset")]
+    InsufficientOCF {},
+
+
+    #[error("invalid asset")]
+    InsufficientCollateral {},
+
     #[error("position is not available")]
     PositionNotAvailable {},
 

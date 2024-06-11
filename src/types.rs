@@ -11,9 +11,10 @@ pub struct PoolConfig {
     pub pool_name: String,
     pub pool_symbol: String,
     pub pool_maturation_date: Timestamp,
-    pub pool_debt_interest_rate: Uint128,
+    pub pool_debt_interest_rate: Uint128, // param to play for leverage / liquidity
+    pub pool_strike_price: Uint128,
     pub pool_lend_interest_rate: Uint128,
-    pub min_overcollateralization_factor: Uint128,
+    pub min_overcollateralization_factor: Uint128, // param to play for leverage / liquidity
     pub asset_address: Addr,
     pub collateral_address: Addr,
 }
