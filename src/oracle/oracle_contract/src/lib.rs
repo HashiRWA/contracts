@@ -51,7 +51,6 @@ pub enum ExecuteMsg {
 #[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
     GetPrice { token: String },
-    QueryExternalPrice { oracle_addr: String, denom: String },
 }
 
 #[entry_point]
@@ -110,7 +109,6 @@ fn try_update_price(
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::GetPrice { token } => query_price(deps, token),
-        QueryMsg::QueryExternalPrice { oracle_addr, denom } => query_external_price(deps, oracle_addr, denom),
     }
 }
 
@@ -126,16 +124,7 @@ fn query_price(deps: Deps, token: String) -> StdResult<Binary> {
     }
 }
 
-fn query_external_price(deps: Deps, oracle_addr: String, denom: String) -> StdResult<Binary> {
-    let msg = QueryRequest::Wasm(
-        WasmQuery::Smart {
-            contract_addr: oracle_addr,
-            msg: to_binary(&ExternalOracleQueryMsg { symbol: denom })?
-        }
-    );
-    let response: ExternalPriceResponse = deps.querier.query(&msg)?;
-    to_binary(&response)
-}
+
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ExternalOracleQueryMsg {
@@ -252,32 +241,4 @@ mod tests {
         assert!(res.is_err());
     }
 
-    // #[test]
-    // fn query_external_price() {
-    //     let mut deps = mock_dependencies();
-
-    //     let oracle_addr = String::from("oracle_address");
-    //     let denom = String::from("usd");
-
-    //     // Mock the response from the external oracle
-    //     deps.querier.with_wasm_query(|request: &QueryRequest<ExternalOracleQueryMsg>| -> QuerierResult {
-    //         match request {
-    //             QueryRequest::Wasm(WasmQuery::Smart { .. }) => {
-    //                 SystemResult::Ok(ContractResult::Ok(to_binary(&ExternalPriceResponse {
-    //                     price: Uint128::new(123456),
-    //                     precision: Uint128::new(1),
-    //                 }).unwrap()))
-    //             }
-    //             _ => SystemResult::Err(SystemError::UnsupportedRequest {
-    //                 kind: format!("{:?}", request),
-    //             }),
-    //         }
-    //     });
-
-    //     let query_msg = QueryMsg::QueryExternalPrice { oracle_addr: oracle_addr.clone(), denom: denom.clone() };
-    //     let res = query(deps.as_ref(), mock_env(), query_msg).unwrap();
-    //     let price_response: ExternalPriceResponse = from_binary(&res).unwrap();
-    //     assert_eq!(price_response.price, Uint128::new(123456));
-    //     assert_eq!(price_response.precision, Uint128::new(1));
-    // }
 }
