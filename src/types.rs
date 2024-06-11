@@ -18,30 +18,8 @@ pub struct PoolConfig {
     pub asset_address: Addr,
     pub collateral_address: Addr,
 }
-
-
 pub struct CoinConfig {
     pub address: Addr,
     pub denom: String,
     pub decimals: u16,
-}
-
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-
-pub struct UserLendingInfo {
-    pub amount: Uint128,
-    pub time: Timestamp,
-    pub interest_rate: Uint128,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct UserBorrowingInfo {
-    pub type_: String,
-    pub amount: Uint128,
-    pub time: Timestamp,
-    pub collateral_submitted: Uint128,
-    pub interest_rate: Uint128,
 }

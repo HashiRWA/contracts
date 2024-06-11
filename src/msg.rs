@@ -16,11 +16,9 @@ pub struct InstantiateMsg {
 pub enum TransactMsg {
     Deposit {},
     Withdraw {
-        denom: String,
         amount: Uint128,
     },
     Borrow {
-        denom: String,
         amount: Uint128,
     },
     Repay {},
