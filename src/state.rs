@@ -5,7 +5,7 @@ use cosmwasm_std::{Addr, Uint128, Timestamp};
 use cw_storage_plus::{Item, Map};
 
 
-use crate::types::PoolConfig;
+use crate::types::{PoolConfig,UserBorrowingInfo, UserLendingInfo};
 
 #[cw_serde]
 pub struct UserAssetInfo {
@@ -35,8 +35,10 @@ pub struct Config {
 }
 
 
-pub const USER_LENDING_INFOS: Map<&Addr, UserLendingInfo> = Map::new("user_lending_infos");
-pub const USER_BORROWING_INFOS: Map<&Addr, UserBorrowingInfo> = Map::new("user_borrowing_infos");
+
+
+pub const USER_LENDING_INFOS: Map<&Addr, Vec<UserLendingInfo>> = Map::new("user_lending_infos");
+pub const USER_BORROWING_INFOS: Map<&Addr, Vec<UserBorrowingInfo>> = Map::new("user_borrowing_infos"); 
 
 pub const POOL_CONFIG: Item<PoolConfig> = Item::new("pool_config");
 pub const ADMIN: Item<Addr> = Item::new("admin");
