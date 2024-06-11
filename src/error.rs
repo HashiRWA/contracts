@@ -1,3 +1,5 @@
+use core::error;
+
 use cosmwasm_std::{Coin, StdError};
 use thiserror::Error;
 
@@ -12,6 +14,12 @@ pub enum ContractError {
 
     #[error("pool not matured")]
     PoolNotMatured {},
+
+    #[error("undercollateralized")]
+    Undercollateralized {},
+
+    #[error("excessive funds")]
+    ExcessiveFunds {},
 
     #[error("expired option (expired {expired:?})")]
     OptionExpired { expired: u64 },

@@ -24,10 +24,7 @@ pub enum TransactMsg {
         amount: Uint128,
     },
     Repay {},
-    Liquidate {
-        user_addr: String,
-        denom: String,
-    },
+    Liquidate {},
 }
 
 
