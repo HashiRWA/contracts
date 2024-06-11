@@ -1,5 +1,11 @@
-use cosmwasm_std::{Addr, Uint128};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use cosmwasm_std::{Addr, Uint128, Timestamp};
 use cw_storage_plus::{Item, Map};
+
+
+use crate::types::PoolConfig;
 
 #[cw_serde]
 pub struct UserAssetInfo {
@@ -27,5 +33,8 @@ pub struct Config {
     pub interest_rate: Uint128,
     pub min_liqudation_ratio : Uint128
 }
+
+
+pub const POOL_CONFIG: Item<PoolConfig> = Item::new("pool_config");
 
 pub const CONFIG: Item<Config> = Item::new("config");

@@ -1,6 +1,6 @@
 pub mod contract;
 mod error;
-pub mod liquidation;
+pub mod types;
 pub mod msg;
 pub mod state;
 pub mod query;

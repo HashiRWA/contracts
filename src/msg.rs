@@ -2,8 +2,11 @@ use cosmwasm_std::Uint128;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::types::PoolConfig;
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct InstantiateMsg {
+    pub pool_config: PoolConfig,
     pub oracle: String,
     pub admin: String,
 }
