@@ -16,3 +16,25 @@ pub struct PoolConfig {
     pub token0_address: Addr,
     pub token1_address: Addr,
 }
+
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+
+pub struct UserLendingInfo {
+    pub user_addr: Addr,
+    pub token_addr: Addr,
+    pub amount: Uint128,
+    pub time: Timestamp,
+    pub interest_rate: Uint128,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UserBorrowingInfo {
+    pub user_addr: Addr,
+    pub token_addr: Addr,
+    pub amount: Uint128,
+    pub time: Timestamp,
+    pub interest_rate: Uint128,
+}

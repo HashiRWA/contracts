@@ -26,15 +26,6 @@ pub fn instantiate(
     _info: MessageInfo,
     msg: InstantiateMsg,
 ) -> ContractResult<Response> {
-    // TODO: Instantiate the Pool here
-    // 1. Pool Name 
-    // 2. Pool Symbol
-    // 3. Pool Maturation Date
-    // 3. Pool Debt Interest Rate
-    // 4. Pool Lend Interest Rate
-    // 5. Token0 Address
-    // 6. Token1 Address
-    // set pool configuration
     POOL_CONFIG.save(deps.storage, &msg.pool_config)?;
     ADMIN.save(deps.storage, &deps.api.addr_validate(&msg.admin)?)?;
     ASSETS.save(deps.storage, &vec![])?;
