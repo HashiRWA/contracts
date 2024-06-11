@@ -1,3 +1,4 @@
+workspace = { members = ["src/oracle/oracle_contract"] }
 [package]
 name = "hashirwa_contracts"
 version = "0.1.0"
