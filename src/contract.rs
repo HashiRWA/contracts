@@ -19,6 +19,11 @@ use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 use crate::state::{POOL_CONFIG,  ASSETS, ASSET_INFO, ADMIN, UserAssetInfo, AssetConfig, AssetInfo, GLOBAL_DATA, GlobalData, RATE_DENOMINATOR, NANOSECONDS_IN_YEAR};
 use crate::query::query_handler;
 
+use crate::deposit::{quoteDeposit, deposit};
+use crate::withdraw::{quoteWithdraw, withdraw};
+use crate::borrow::{quoteBorrow, borrow};
+use crate::repay::{quoteRepay, repay};
+
 #[entry_point]
 pub fn instantiate(
     deps: DepsMut,

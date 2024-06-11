@@ -5,5 +5,11 @@ pub mod msg;
 pub mod state;
 pub mod query;
 pub mod external;
+
+// Transactions 
+pub mod deposit;
+pub mod withdraw;
+pub mod borrow;
+pub mod repay;
 #[cfg(test)]
 pub mod tests;
