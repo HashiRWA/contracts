@@ -13,14 +13,9 @@ pub struct InstantiateMsg {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum ExecuteMsg {
+pub enum TransactMsg {
     Deposit {},
     Withdraw {
-        denom: String,
-        amount: Uint128,
-    },
-    DepositCollateral {},
-    WithdrawCollateral {
         denom: String,
         amount: Uint128,
     },
@@ -33,6 +28,12 @@ pub enum ExecuteMsg {
         user_addr: String,
         denom: String,
     },
+}
+
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ExecuteMsg {
     UpdateUserAssetInfo {
         user_addr: String, 
     },

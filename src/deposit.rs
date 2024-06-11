@@ -1,6 +1,7 @@
 
 use std::convert::TryInto;
 use crate::external::query_price;
+use crate::types::UserLendingInfo;
 
 // Creating a Lending and Borrowing Protocol,
 // where users can deposit assets and borrow other assets.
@@ -17,7 +18,7 @@ use cosmwasm_std::{
 use crate::error::{ContractError, ContractResult};
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 
-use crate::state::{POOL_CONFIG,  ASSETS, ASSET_INFO, ADMIN, UserAssetInfo, AssetConfig, AssetInfo, GLOBAL_DATA, GlobalData, RATE_DENOMINATOR, NANOSECONDS_IN_YEAR};
+use crate::state::{AssetConfig, AssetInfo, GlobalData, UserAssetInfo, ADMIN, ASSETS, ASSET_CONFIG, ASSET_INFO, GLOBAL_DATA, NANOSECONDS_IN_YEAR, POOL_CONFIG, RATE_DENOMINATOR, TOTAL_ASSET_AVAILABLE, USER_LENDING_INFOS};
 use crate::query::query_handler;
 
 
@@ -26,85 +27,46 @@ use crate::query::query_handler;
 // quoteDeposit
 // deposit
 
-
-pub fn quoteDeposit(
-    mut deps: DepsMut,
-    env: Env,
-    info: MessageInfo,
-  ) -> Result<Response, ContractError> {
-    update(&mut deps, &env, &info.sender)?;
-  
-  
-    for coin in info.funds.iter() { 
-        // Fetch global cumulative interest for this asset
-        let mut asset_info = ASSET_INFO.load(deps.storage, &coin.denom)?;
-  
-        USER_ASSET_INFO.update(
-            deps.storage, 
-            (&info.sender, &coin.denom),
-            |user_asset| -> StdResult<UserAssetInfo> {
-                match user_asset {
-                    Some(mut user_asset) => {
-                        user_asset.collateral += coin.amount;
-                        Ok(user_asset)
-                    },
-                    None => {
-                        Ok(UserAssetInfo {
-                            collateral: coin.amount,
-                            borrow_amount: Uint128::zero(),
-                            l_asset_amount: Uint128::zero(),
-                            cumulative_interest: asset_info.cumulative_interest,
-                        })
-                    }
-                }
-            }
-        )?;
-  
-        asset_info.total_collateral += coin.amount;
-  
-        ASSET_INFO.save(deps.storage, &coin.denom, &asset_info)?;
-    }
-  
-    Ok(Response::default())
-  }
+// TODO: Implement deposit function
+// 1) firstly check if the pool has not matured, if the pool is matured revert the transaction
+// 2) accept funds from user, and update user's lending_info vec with the new lending_info object (append)
+// 3) add asset ammount to the pool's total asset amount
 
 pub fn deposit(
     mut deps: DepsMut,
     env: Env,
     info: MessageInfo,
-  ) -> Result<Response, ContractError> {
-    update(&mut deps, &env, &info.sender)?;
-  
-  
-    for coin in info.funds.iter() { 
-        // Fetch global cumulative interest for this asset
-        let mut asset_info = ASSET_INFO.load(deps.storage, &coin.denom)?;
-  
-        USER_ASSET_INFO.update(
-            deps.storage, 
-            (&info.sender, &coin.denom),
-            |user_asset| -> StdResult<UserAssetInfo> {
-                match user_asset {
-                    Some(mut user_asset) => {
-                        user_asset.collateral += coin.amount;
-                        Ok(user_asset)
-                    },
-                    None => {
-                        Ok(UserAssetInfo {
-                            collateral: coin.amount,
-                            borrow_amount: Uint128::zero(),
-                            l_asset_amount: Uint128::zero(),
-                            cumulative_interest: asset_info.cumulative_interest,
-                        })
-                    }
-                }
-            }
-        )?;
-  
-        asset_info.total_collateral += coin.amount;
-  
-        ASSET_INFO.save(deps.storage, &coin.denom, &asset_info)?;
+) -> ContractResult<Response> {
+
+    // get info of asset -> asset config
+    let pool_config = POOL_CONFIG.load(deps.storage)?;
+    let asset_config = ASSET_CONFIG.load(deps.storage)?;
+    let now = env.block.time;
+
+    // check if the pool has matured
+    if now > pool_config.pool_maturation_date {
+        return Err(ContractError::PoolMatured {});
     }
-  
+
+    // get the amount of asset to be deposited
+    let amount = info.funds.iter().find(|coin| coin.denom == asset_config.denom).unwrap().amount;
+
+    // get the user's lending info
+    let user_lending_info = UserLendingInfo {
+        amount,
+        time: now,
+        interest_rate: pool_config.pool_lend_interest_rate,
+    };
+
+    // update the user's lending info
+    let mut user_lending_infos = USER_LENDING_INFOS.load(deps.storage, &info.sender)?;
+    user_lending_infos.push(user_lending_info);
+    USER_LENDING_INFOS.save(deps.storage, &info.sender, &user_lending_infos)?;
+
+    // update the pool's total asset amount
+    let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
+    total_asset_available += amount;
+    TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
+
     Ok(Response::default())
-  }
+}
