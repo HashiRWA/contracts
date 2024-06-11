@@ -18,7 +18,7 @@ use cosmwasm_std::{
 use crate::error::{ContractError, ContractResult};
 use crate::msg::{ InstantiateMsg, QueryMsg, TransactMsg};
 
-use crate::state::{ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG,, NANOSECONDS_IN_YEAR, POOL_CONFIG, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE, USERS_BORROWING_INFOS, USERS_LENDING_INFOS};
+use crate::state::{ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, INTEREST_EARNED, NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE, USERS_BORROWING_INFOS, USERS_LENDING_INFOS};
 use crate::query::query_handler;
 
 
@@ -105,14 +105,15 @@ fn liquidate(
 }
 
 
+fn calculate_simple_interest(principle: Uint128, interest_rate: Uint128, time_period: u64) -> Uint128 {
+    // formula : P * R(for 1 year) * T (in nanoseconds) / NANOSECONDS_IN_YEAR
+    principle * interest_rate * Uint128::from(time_period / NANOSECONDS_IN_YEAR)
+}
 
+fn get_time_period(now: Timestamp, time: Timestamp) -> u64 {
+    now.seconds() - time.seconds()
+}
 
-
-
-// TODO: Implement deposit function
-// 1) firstly check if the pool has not matured, if the pool is matured revert the transaction
-// 2) accept funds from user, and update user's lending_info vec with the new lending_info object (append)
-// 3) add asset ammount to the pool's total asset amount
 
 fn deposit(
     mut deps: DepsMut,
@@ -120,41 +121,109 @@ fn deposit(
     info: MessageInfo,
 ) -> ContractResult<Response> {
 
-    // get info of asset -> asset config
-    let pool_config = POOL_CONFIG.load(deps.storage)?;
-    let asset_config = ASSET_CONFIG.load(deps.storage)?;
+    let pool_config:PoolConfig = POOL_CONFIG.load(deps.storage)?;
+    let asset_config:CoinConfig = ASSET_CONFIG.load(deps.storage)?;
     let now = env.block.time;
+    
+    if now > pool_config.pool_maturation_date {return Err(ContractError::PoolMatured {});}
 
-    // check if the pool has matured
-    if now > pool_config.pool_maturation_date {
-        return Err(ContractError::PoolMatured {});
-    }
+    let principle_deployed_map : Map<&Addr, (Uint128,Timestamp)> = PRINCIPLE_DEPLOYED.load(deps.storage)?;
+    let interest_earned_map : Map<&Addr, Uint128> = INTEREST_EARNED.load(deps.storage)?;
+    
+    let interest_earned_by_user = interest_earned_map.get(&info.sender).unwrap_or_default();
+    let principle_and_timestamp:(Uint128,Timestamp) = principle_deployed_map.get(&info.sender).unwrap_or_default();
 
-    // get the amount of asset to be deposited
-    let amount = info.funds.iter().find(|coin| coin.denom == asset_config.denom).unwrap().amount;
+    let principle_deployed = principle_and_timestamp.0;
+    let last_deposit_time = principle_and_timestamp.1;
 
-    // get the user's lending info
-    let user_lending_info = UserLendingInfo {
-        amount,
-        time: now,
-        interest_rate: pool_config.pool_lend_interest_rate,
-    };
+    let time_period = get_time_period(now, last_deposit_time);
+    let interest_since_last_deposit = calculate_simple_interest(principle_deployed, pool_config.pool_lend_interest_rate, time_period);
 
-    // update the user's lending info
-    let mut user_lending_infos = USERS_LENDING_INFOS.load(deps.storage, &info.sender)?;
-    //  get usr lending info from the users lending info map
-    let user_lending_infos : Vec<UserLendingInfo> = user_lending_infos.get(&info.sender).unwrap();
-    user_lending_infos.push(user_lending_info);
-    USERS_LENDING_INFOS.save(deps.storage, &info.sender, &user_lending_infos)?;
+    let principle_to_deposit = info.funds.iter().find(|coin| coin.denom == asset_config.denom).unwrap().amount;
 
-    // update the pool's total asset amount
+    INTEREST_EARNED.save(deps.storage, &info.sender, &interest_earned_by_user + interest_since_last_deposit);
+    PRINCIPLE_DEPLOYED.save(deps.storage, &info.sender, (&principle_deployed + principle_to_deposit, now));
+
     let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
-    total_asset_available += amount;
+    total_asset_available += principle_to_deposit;
     TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
 
     Ok(Response::default())
 }
 
+
+fn withdraw(
+    mut deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    amount : Uint128
+) -> ContractResult<Response> {
+    
+    let principle_to_withdraw = amount;
+    let pool_config:PoolConfig = POOL_CONFIG.load(deps.storage)?;
+    let asset_config:CoinConfig = ASSET_CONFIG.load(deps.storage)?;
+    let now = env.block.time;
+
+    let principle_deployed_map : Map<&Addr, Uint128> = PRINCIPLE_DEPLOYED.load(deps.storage)?;
+    let interest_earned_map : Map<&Addr, Uint128> = INTEREST_EARNED.load(deps.storage)?;
+    
+    let interest_earned_by_user = interest_earned_map.get(&info.sender).unwrap_or_default();
+    let principle_and_timestamp:(Uint128,Timestamp) = principle_deployed_map.get(&info.sender).unwrap_or_default();
+
+    let principle_deployed = principle_and_timestamp.0;
+    let last_deposit_time = principle_and_timestamp.1;
+
+    // can't execute withdraw if user doesn't have any position
+    if principle_deployed == Uint128::zero() && interest_earned_by_user == Uint128::zero() {
+        return Err(ContractError::PositionNotAvailable {});
+    } else if principle_deployed < principle_to_withdraw {
+        return Err(ContractError::InsufficientFunds {});
+    }
+ 
+    let time_period = get_time_period(now, last_deposit_time);
+    let interest = calculate_simple_interest(principle_deployed, pool_config.pool_lend_interest_rate, time_period);
+
+    // TODO: can send interest with principle but not sending right now
+
+    INTEREST_EARNED.save(deps.storage, &info.sender, &interest_earned_by_user + interest);
+    PRINCIPLE_DEPLOYED.save(deps.storage, &info.sender, (&principle_deployed - principle_to_withdraw, now));
+
+    let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
+    total_asset_available -= principle_to_withdraw;
+    TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
+
+    // send the funds to the user
+    let bank_msg = BankMsg::Send {
+        to_address: info.sender.to_string(),
+        amount: vec![Coin {
+            denom: asset_config.denom.to_string(),
+            amount: principle_to_withdraw,
+        }],
+    };
+
+    Ok(Response::default())
+}
+
+
+// TODO: a function that let's user transfer all the interest earned to their account
+fn withdraw_interest(
+    mut deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+) -> ContractResult<Response> {
+    let interest_earned_map : Map<&Addr, Uint128> = INTEREST_EARNED.load(deps.storage)?;
+    let interest_earned_by_user = interest_earned_map.get(&info.sender).unwrap_or_default();
+    INTEREST_EARNED.save(deps.storage, &info.sender, &Uint128::zero());
+    let asset_config:CoinConfig = ASSET_CONFIG.load(deps.storage)?;
+    let bank_msg = BankMsg::Send {
+        to_address: info.sender.to_string(),
+        amount: vec![Coin {
+            denom: asset_config.denom.to_string(),
+            amount: interest_earned_by_user,
+        }],
+    };
+    Ok(Response::new().add_message(bank_msg))
+}
 
 
 // TODO : verify this with madhav
@@ -184,7 +253,7 @@ fn calculate_interest_given_user_deposit_vector(deps : DepsMut, user_lending_inf
 // 5) if all the conditions are satisfied, then update the user's position vector, and update the total asset amount in the pool
 // 6) send the funds to the user
 
-fn withdraw(
+fn withdraw2(
     mut deps: DepsMut,
     env: Env,
     info: MessageInfo,

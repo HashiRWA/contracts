@@ -21,6 +21,9 @@ pub enum ContractError {
     #[error("excessive funds")]
     ExcessiveFunds {},
 
+    #[error("position is not available")]
+    PositionNotAvailable {},
+
     #[error("expired option (expired {expired:?})")]
     OptionExpired { expired: u64 },
 
