@@ -105,38 +105,31 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> ContractResult<Binary> {
             Ok(to_json_binary(&principle_to_repay)?)
         },
         QueryMsg::Assets {} => {
-            // Handle this query, for example, return the list of assets
-            // Implement the logic for handling Assets query
+ 
             Ok(to_json_binary(&"Assets query response")?)
         },
         QueryMsg::UserAssetsInfo { user } => {
-            // Handle this query, for example, return user's asset info
-            // Implement the logic for handling UserAssetsInfo query
+
             Ok(to_json_binary(&format!("User assets info for {}", user))?)
         },
         QueryMsg::UserAssetInfo { user, denom } => {
-            // Handle this query, for example, return user's specific asset info
-            // Implement the logic for handling UserAssetInfo query
+
             Ok(to_json_binary(&format!("User asset info for {} and denom {}", user, denom))?)
         },
         QueryMsg::UserData { user } => {
-            // Handle this query, for example, return user's data
-            // Implement the logic for handling UserData query
+ 
             Ok(to_json_binary(&format!("User data for {}", user))?)
         },
         QueryMsg::AssetInfo { denom } => {
-            // Handle this query, for example, return asset info
-            // Implement the logic for handling AssetInfo query
+    
             Ok(to_json_binary(&format!("Asset info for denom {}", denom))?)
         },
         QueryMsg::AssetsInfo {} => {
-            // Handle this query, for example, return all assets info
-            // Implement the logic for handling AssetsInfo query
+
             Ok(to_json_binary(&"All assets info")?)
         },
         QueryMsg::MaxLiquidationAmount { user } => {
-            // Handle this query, for example, return the maximum liquidation amount for the user
-            // Implement the logic for handling MaxLiquidationAmount query
+
             Ok(to_json_binary(&format!("Max liquidation amount for {}", user))?)
         },
     }
@@ -541,10 +534,8 @@ mod tests {
         let owner = "owner";
         let user = Addr::unchecked("user");
     
-        // Instantiate the contract
         let contract_addr = instantiate_contract(&mut app, owner);
 
-        // Mock initial balances for the user
         app.sudo(SudoMsg::Bank(BankSudo::Mint {
             to_address: user.to_string(),
             amount: vec![
@@ -564,7 +555,6 @@ mod tests {
         println!("Initial asset balance: {}", initial_asset_balance.amount);
         println!("Initial collateral balance: {}", initial_collateral_balance.amount);
 
-        // Define the amounts to add as liquidity
         let asset_amount = Uint128::new(1000);
         let collateral_amount = Uint128::new(2000);
 
@@ -575,19 +565,15 @@ mod tests {
             Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
         ]);
 
-        // Execute the add_liquidity message
         let result = app.execute_contract(user.clone(), contract_addr.clone(), &msg, &info.funds);
 
-        // Print the result for debugging
         if result.is_err() {
             println!("Execution failed: {:?}", result.unwrap_err());
             assert!(false, "Execution should succeed");
         } else {
-            // Print the response for debugging
             println!("Execution succeeded: {:?}", result.unwrap());
         }
 
-        // Query and verify the updated totals
         let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
         let total_collateral_available: Uint128 = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetTotalCollateralAvailable {}).unwrap();
 
@@ -606,15 +592,12 @@ mod tests {
 
     #[test]
     fn test_deposit() {
-        let mut app = App::default();
-        let owner = "owner";
+
         let mut app = App::default();
         let owner = "owner";
         let user = Addr::unchecked("user");
     
-        let contract_addr = instantiate_contract(&mut app, owner);
-
-        // Mock initial balances for the user
+  
         app.sudo(SudoMsg::Bank(BankSudo::Mint {
             to_address: user.to_string(),
             amount: vec![
@@ -650,17 +633,11 @@ mod tests {
 
     #[test]
     fn test_withdraw() {
-        let mut app = App::default();
-        let owner = "owner";
-        let mut app = App::default();
-        let owner = "owner";
+
         let mut app = App::default();
         let owner = "owner";
         let user = Addr::unchecked("user");
     
-        let contract_addr = instantiate_contract(&mut app, owner);
-
-        // Mock initial balances for the user
         app.sudo(SudoMsg::Bank(BankSudo::Mint {
             to_address: user.to_string(),
             amount: vec![
@@ -695,8 +672,11 @@ mod tests {
         let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
         assert_eq!(total_asset_available, asset_amount - withdraw_amount);
 
-        let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrinciple { user: user.to_string() }).unwrap();
+        let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetUserPrinciple { user: user.to_string() }).unwrap();
         assert_eq!(user_principle.0, asset_amount - withdraw_amount);
+        let final_asset_balance = app.wrap().query_balance(contract_addr.clone(), "asset_token").unwrap();
+        let final_collateral_balance = app.wrap().query_balance(contract_addr.clone(), "collateral_token").unwrap();
+        assert_eq!(final_asset_balance.amount , withdraw_amount);    
     }
 
     #[test]
@@ -711,7 +691,6 @@ mod tests {
     
         let contract_addr = instantiate_contract(&mut app, owner);
 
-        // Mock initial balances for the user
         app.sudo(SudoMsg::Bank(BankSudo::Mint {
             to_address: user.to_string(),
             amount: vec![
