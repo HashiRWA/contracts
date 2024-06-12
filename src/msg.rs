@@ -47,6 +47,7 @@ pub enum ExecuteMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum QueryMsg {
+    PoolConfig {},
     Assets {},
     UserAssetsInfo {
         user: String,
@@ -70,4 +71,17 @@ pub enum QueryMsg {
     GetTotalCollateralAvailable {},
     GetUserPrinciple { user: String },
     GetUserPrincipleToRepay { user: String },
+
+    GetDepositQuote {
+        amount: Uint128,
+    },
+
+    GetWithdrawablePositions {},
+
+    GetLoanQuote {
+        amount: Uint128,
+    },
+
+    GetRepayablePositions {},
+
 }
