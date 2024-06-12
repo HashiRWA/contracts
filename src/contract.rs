@@ -1,15 +1,16 @@
 use cosmwasm_std::{
-    entry_point, Addr, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response, Timestamp, Uint128, StdError,
+    entry_point, Addr, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response, Timestamp, Uint128,
 };
 use crate::error::{ContractError, ContractResult};
-use crate::msg::{InstantiateMsg, QueryMsg, TransactMsg};
+use crate::msg::{InstantiateMsg, QueryMsg, TransactMsg, ExecuteMsg};
 use crate::state::{
     ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, PRINCIPLE_TO_REPAY, COLLATERAL_SUBMITTED, INTEREST_EARNED, INTEREST_TO_REPAY,
     NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE,
 };
 use crate::types::{CoinConfig, PoolConfig};
 use crate::query::query_handler;
-
+use cosmwasm_std::to_json_binary;
+use cosmwasm_std::to_binary;
 #[entry_point]
 pub fn instantiate(
     deps: DepsMut,
@@ -28,39 +29,135 @@ pub fn execute(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-
-    msg: TransactMsg,
+    msg: ExecuteMsg,
 ) -> ContractResult<Response> {
     match msg {
-        TransactMsg::AddLiquidity {} => add_liquidity(deps, env, info),
-
-        TransactMsg::Deposit {} => deposit(deps, env, info),
-
-        TransactMsg::WithdrawInterest {} => withdraw_interest(deps, env, info),
-
-        TransactMsg::Withdraw { amount } => withdraw(deps, env, info, amount),
-        
-        TransactMsg::Borrow { amount } => borrow(deps, env, info, amount),
-        
-        TransactMsg::Repay {} => repay(deps, env, info),
-        
-        
-        TransactMsg::Liquidate {} => liquidate(deps, env, info),
+        ExecuteMsg::Transact(transact_msg) => match transact_msg {
+            TransactMsg::AddLiquidity {} => add_liquidity(deps, env, info),
+            TransactMsg::Deposit {} => deposit(deps, env, info),
+            TransactMsg::WithdrawInterest {} => withdraw_interest(deps, env, info),
+            TransactMsg::Withdraw { amount } => withdraw(deps, env, info, amount),
+            TransactMsg::Borrow { amount } => borrow(deps, env, info, amount),
+            TransactMsg::Repay {} => repay(deps, env, info),
+            TransactMsg::Liquidate {} => liquidate(deps, env, info),
+        },
+        ExecuteMsg::UpdateUserAssetInfo { user_addr } => update_user_asset_info(deps, user_addr),
+        ExecuteMsg::UpdateAsset {
+            denom,
+            decimals,
+            target_utilization_rate_bps,
+            min_rate,
+            optimal_rate,
+            max_rate,
+        } => update_asset(
+            deps,
+            denom,
+            decimals,
+            target_utilization_rate_bps,
+            min_rate,
+            optimal_rate,
+            max_rate,
+        ),
     }
 }
 
 #[entry_point]
-pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> ContractResult<Binary> {
-    query_handler(deps, env, msg)
+pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> ContractResult<Binary> {
+    match msg {
+        QueryMsg::GetOwner {} => {
+            let admin = ADMIN.load(deps.storage)?;
+            Ok(to_json_binary(&admin)?)
+        },
+        QueryMsg::GetTotalAssetAvailable {} => {
+            let total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
+            Ok(to_json_binary(&total_asset_available)?)
+        },
+        QueryMsg::GetTotalCollateralAvailable {} => {
+            let total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage)?;
+            Ok(to_json_binary(&total_collateral_available)?)
+        },
+        QueryMsg::GetUserPrinciple { user } => {
+            let user_addr = deps.api.addr_validate(&user)?;
+            let principle = PRINCIPLE_DEPLOYED.may_load(deps.storage, &user_addr)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+            Ok(to_json_binary(&principle)?)
+        },
+        QueryMsg::GetUserPrincipleToRepay { user } => {
+            let user_addr = deps.api.addr_validate(&user)?;
+            let principle_to_repay = PRINCIPLE_TO_REPAY.may_load(deps.storage, &user_addr)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+            Ok(to_json_binary(&principle_to_repay)?)
+        },
+        QueryMsg::Assets {} => {
+            // Handle this query, for example, return the list of assets
+            // Implement the logic for handling Assets query
+            Ok(to_json_binary(&"Assets query response")?)
+        },
+        QueryMsg::UserAssetsInfo { user } => {
+            // Handle this query, for example, return user's asset info
+            // Implement the logic for handling UserAssetsInfo query
+            Ok(to_json_binary(&format!("User assets info for {}", user))?)
+        },
+        QueryMsg::UserAssetInfo { user, denom } => {
+            // Handle this query, for example, return user's specific asset info
+            // Implement the logic for handling UserAssetInfo query
+            Ok(to_json_binary(&format!("User asset info for {} and denom {}", user, denom))?)
+        },
+        QueryMsg::UserData { user } => {
+            // Handle this query, for example, return user's data
+            // Implement the logic for handling UserData query
+            Ok(to_json_binary(&format!("User data for {}", user))?)
+        },
+        QueryMsg::AssetInfo { denom } => {
+            // Handle this query, for example, return asset info
+            // Implement the logic for handling AssetInfo query
+            Ok(to_json_binary(&format!("Asset info for denom {}", denom))?)
+        },
+        QueryMsg::AssetsInfo {} => {
+            // Handle this query, for example, return all assets info
+            // Implement the logic for handling AssetsInfo query
+            Ok(to_json_binary(&"All assets info")?)
+        },
+        QueryMsg::MaxLiquidationAmount { user } => {
+            // Handle this query, for example, return the maximum liquidation amount for the user
+            // Implement the logic for handling MaxLiquidationAmount query
+            Ok(to_json_binary(&format!("Max liquidation amount for {}", user))?)
+        },
+    }
 }
 
 
+// Placeholder implementation for ExecuteMsg::UpdateUserAssetInfo
+fn update_user_asset_info(deps: DepsMut, user_addr: String) -> ContractResult<Response> {
+    // Placeholder logic, replace with actual implementation
+    Ok(Response::new().add_attribute("action", "update_user_asset_info").add_attribute("user_addr", user_addr))
+}
+
+// Placeholder implementation for ExecuteMsg::UpdateAsset
+fn update_asset(
+    deps: DepsMut,
+    denom: String,
+    decimals: u16,
+    target_utilization_rate_bps: u32,
+    min_rate: u32,
+    optimal_rate: u32,
+    max_rate: u32,
+) -> ContractResult<Response> {
+    // Placeholder logic, replace with actual implementation
+    Ok(Response::new()
+        .add_attribute("action", "update_asset")
+        .add_attribute("denom", denom)
+        .add_attribute("decimals", decimals.to_string())
+        .add_attribute("target_utilization_rate_bps", target_utilization_rate_bps.to_string())
+        .add_attribute("min_rate", min_rate.to_string())
+        .add_attribute("optimal_rate", optimal_rate.to_string())
+        .add_attribute("max_rate", max_rate.to_string()))
+}
+
+// Existing functions for add_liquidity, deposit, withdraw_interest, withdraw, borrow, repay, and liquidate
 fn add_liquidity(
     deps: DepsMut,
     _env: Env,
     info: MessageInfo,
 ) -> ContractResult<Response> {
-
     let asset_info: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
     let collateral_info: CoinConfig = COLLATERAL_CONFIG.load(deps.storage)?;
 
@@ -78,7 +175,6 @@ fn add_liquidity(
     Ok(Response::default())
 }
 
-
 fn liquidate(
     deps: DepsMut,
     _env: Env,
@@ -86,7 +182,6 @@ fn liquidate(
 ) -> ContractResult<Response> {
     let admin = ADMIN.load(deps.storage)?;
     if info.sender != admin {
-        
         return Err(ContractError::Unauthorized {});
     }
 
@@ -351,4 +446,177 @@ fn repay(
     };
 
     Ok(Response::new().add_message(bank_msg))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmwasm_std::{
+        coins, from_binary, Addr, BankMsg, Coin, Empty, Env, MessageInfo, Response, Storage, Uint128,
+    };
+    use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
+    use cw_multi_test::{App, BankSudo, Contract, ContractWrapper, Executor};
+
+    // Create a mock contract for testing purposes
+    fn mock_contract() -> Box<dyn Contract<Empty>> {
+        let contract = ContractWrapper::new(
+            crate::contract::execute,
+            crate::contract::instantiate,
+            crate::contract::query,
+        );
+        Box::new(contract)
+    }
+
+    fn instantiate_contract(app: &mut App, owner: &str) -> Addr {
+        let contract_id = app.store_code(mock_contract());
+        let msg = InstantiateMsg {
+            admin: owner.to_string(),
+            pool_config: PoolConfig {
+                pool_name: "Test Pool".to_string(),
+                pool_symbol: "TP".to_string(),
+                pool_maturation_date: 1950000000,  
+                pool_debt_interest_rate: Uint128::new(5),
+                pool_strike_price: Uint128::new(2),
+                pool_lend_interest_rate: Uint128::new(3),
+                min_overcollateralization_factor: Uint128::new(2),
+                asset_address: Addr::unchecked("asset_token"),
+                collateral_address: Addr::unchecked("collateral_token"),
+            },
+            oracle: "oracle_address".to_string(),  
+        };
+        let owner_info = mock_info(owner, &[]);
+        let contract_addr = app
+            .instantiate_contract(contract_id, Addr::unchecked(owner), &msg, &[], "Test Contract", None)
+            .unwrap();
+        contract_addr
+    }
+
+    #[test]
+    fn test_instantiate() {
+        let mut app = App::default();
+        let owner = "owner";
+
+        let contract_addr = instantiate_contract(&mut app, owner);
+        let stored_owner: Addr = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetOwner {}).unwrap();
+        
+        assert_eq!(stored_owner, Addr::unchecked(owner));
+    }
+
+    #[test]
+    fn test_add_liquidity() {
+        let mut app = App::default();
+        let owner = "owner";
+
+        let contract_addr = instantiate_contract(&mut app, owner);
+
+        let asset_amount = Uint128::new(1000);
+        let collateral_amount = Uint128::new(2000);
+
+        let msg = ExecuteMsg::Transact(TransactMsg::AddLiquidity {});
+
+        let user = "user";
+        let info = mock_info(user, &[
+            Coin { denom: "asset_token".to_string(), amount: asset_amount },
+            Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
+        ]);
+
+        app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
+
+        let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
+        let total_collateral_available: Uint128 = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetTotalCollateralAvailable {}).unwrap();
+
+        assert_eq!(total_asset_available, asset_amount);
+        assert_eq!(total_collateral_available, collateral_amount);
+    }
+
+    // #[test]
+    // fn test_deposit() {
+    //     let mut app = App::default();
+    //     let owner = "owner";
+
+    //     let contract_addr = instantiate_contract(&mut app, owner);
+
+    //     let asset_amount = Uint128::new(1000);
+
+    //     let msg = ExecuteMsg::Transact(TransactMsg::Deposit {});
+
+    //     let user = "user";
+    //     let info = mock_info(user, &[
+    //         Coin { denom: "asset_token".to_string(), amount: asset_amount },
+    //     ]);
+
+    //     app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
+
+    //     let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
+    //     assert_eq!(total_asset_available, asset_amount);
+
+    //     let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrinciple { user: user.to_string() }).unwrap();
+    //     assert_eq!(user_principle.0, asset_amount);
+    // }
+
+    // #[test]
+    // fn test_withdraw() {
+    //     let mut app = App::default();
+    //     let owner = "owner";
+
+    //     let contract_addr = instantiate_contract(&mut app, owner);
+
+    //     let asset_amount = Uint128::new(1000);
+    //     let withdraw_amount = Uint128::new(500);
+
+    //     let msg = ExecuteMsg::Transact(TransactMsg::Deposit {});
+
+    //     let user = "user";
+    //     let info = mock_info(user, &[
+    //         Coin { denom: "asset_token".to_string(), amount: asset_amount },
+    //     ]);
+
+    //     app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
+
+    //     let msg = ExecuteMsg::Transact(TransactMsg::Withdraw { amount: withdraw_amount });
+
+    //     app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &[]).unwrap();
+
+    //     let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
+    //     assert_eq!(total_asset_available, asset_amount - withdraw_amount);
+
+    //     let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrinciple { user: user.to_string() }).unwrap();
+    //     assert_eq!(user_principle.0, asset_amount - withdraw_amount);
+    // }
+
+    // #[test]
+    // fn test_borrow() {
+    //     let mut app = App::default();
+    //     let owner = "owner";
+
+    //     let contract_addr = instantiate_contract(&mut app, owner);
+
+    //     let asset_amount = Uint128::new(1000);
+    //     let collateral_amount = Uint128::new(2000);
+    //     let borrow_amount = Uint128::new(500);
+
+    //     let msg = ExecuteMsg::Transact(TransactMsg::AddLiquidity {});
+
+    //     let info = mock_info(owner, &[
+    //         Coin { denom: "asset_token".to_string(), amount: asset_amount },
+    //         Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
+    //     ]);
+
+    //     app.execute_contract(Addr::unchecked(owner), contract_addr.clone(), &msg, &info.funds).unwrap();
+
+    //     let msg = ExecuteMsg::Transact(TransactMsg::Borrow { amount: borrow_amount });
+
+    //     let user = "user";
+    //     let info = mock_info(user, &[
+    //         Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
+    //     ]);
+
+    //     app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
+
+    //     let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
+    //     assert_eq!(total_asset_available, asset_amount - borrow_amount);
+
+    //     let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrincipleToRepay { user: user.to_string() }).unwrap();
+    //     assert_eq!(user_principle.0, borrow_amount);
+    // }
 }

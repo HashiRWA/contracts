@@ -27,10 +27,10 @@ pub enum TransactMsg {
     Liquidate {},
 }
 
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ExecuteMsg {
+    Transact(TransactMsg),
     UpdateUserAssetInfo {
         user_addr: String, 
     },
@@ -49,7 +49,7 @@ pub enum ExecuteMsg {
 pub enum QueryMsg {
     Assets {},
     UserAssetsInfo {
-        user: String
+        user: String,
     },
     UserAssetInfo {
         user: String,
@@ -65,4 +65,9 @@ pub enum QueryMsg {
     MaxLiquidationAmount {
         user: String,
     },
+    GetOwner {},
+    GetTotalAssetAvailable {},
+    GetTotalCollateralAvailable {},
+    GetUserPrinciple { user: String },
+    GetUserPrincipleToRepay { user: String },
 }

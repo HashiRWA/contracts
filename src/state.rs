@@ -11,16 +11,12 @@ use crate::types::{PoolConfig, CoinConfig};
 pub const POOL_CONFIG: Item<PoolConfig> = Item::new("pool_config");
 
 
-// interest earned by each user is mapped here.
 pub const INTEREST_EARNED: Map<&Addr, Uint128> = Map::new("interest_earned");
-// principle deployed by each user is mapped here.
 pub const PRINCIPLE_DEPLOYED: Map<&Addr, (Uint128,Timestamp)> = Map::new("principle_deployed");
 
-// interest to replay
 pub const INTEREST_TO_REPAY: Map<&Addr, Uint128> = Map::new("interest_to_repay");
-// collateral submitted by each user is mapped here.
 pub const COLLATERAL_SUBMITTED: Map<&Addr, (Uint128,Timestamp)> = Map::new("collateral_deployed");
-// principle to repay
+    
 pub const PRINCIPLE_TO_REPAY: Map<&Addr, (Uint128,Timestamp)> = Map::new("principle_to_repay");
 
 pub const ASSET_CONFIG: Item<CoinConfig> = Item::new("asset_config");
