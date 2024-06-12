@@ -15,6 +15,7 @@ pub struct InstantiateMsg {
 #[serde(rename_all = "camelCase")]
 pub enum TransactMsg {
     Deposit {},
+    WithdrawInterest {},
     Withdraw {
         amount: Uint128,
     },

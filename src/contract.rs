@@ -34,6 +34,7 @@ pub fn execute(
     match msg {
         TransactMsg::Deposit {} => deposit(deps, env, info),
 
+        TransactMsg::WithdrawInterest {} => withdraw_interest(deps, env, info),
 
         TransactMsg::Withdraw { amount } => withdraw(deps, env, info, amount),
         
@@ -135,7 +136,7 @@ fn withdraw(
     let (principle_deployed, last_deposit_time) = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
     let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
 
-    if principle_deployed == Uint128::zero() && interest_earned_by_user == Uint128::zero() {
+    if principle_deployed == Uint128::zero() {
         return Err(ContractError::PositionNotAvailable {});
     } else if principle_deployed < amount {
         return Err(ContractError::InsufficientFunds {});
