@@ -1,50 +1,49 @@
-use core::error;
-
-use cosmwasm_std::{Coin, StdError};
+use cosmwasm_std::{StdError};
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum ContractError {
+    #[error("{0}")]
+    Std(#[from] StdError),
 
-    #[error("pool matured")]
-    PoolMatured {},
-
-    #[error("pool not matured")]
-    PoolNotMatured {},
-
-    #[error("undercollateralized")]
-    Undercollateralized {},
-
-    #[error("excessive funds")]
-    ExcessiveFunds {},
-
-    #[error("pool expired and collateral forfeited")]
-    CollateralForfeited {},
-
-
-    #[error("invalid state")]
-    InvalidState {},
-
-
-    #[error("invalid asset")]
-    InsufficientOCF {},
-
-
-    #[error("invalid asset")]
-    InsufficientCollateral {},
-
-    #[error("position is not available")]
-    PositionNotAvailable {},
-
-    #[error("expired option (expired {expired:?})")]
-    OptionExpired { expired: u64 },
-
-    #[error("not expired option (expires {expires:?})")]
-    OptionNotExpired { expires: u64 },
-
-    #[error("unauthorized")]
+    #[error("Unauthorized")]
     Unauthorized {},
 
+    #[error("Pool has matured, cannot perform this operation")]
+    PoolMatured {},
+
+    #[error("Pool has not matured yet")]
+    PoolNotMatured {},
+
+    #[error("Position is undercollateralized")]
+    Undercollateralized {},
+
+    #[error("Excessive funds provided")]
+    ExcessiveFunds {},
+
+    #[error("Pool expired and collateral has been forfeited")]
+    CollateralForfeited {},
+
+    #[error("Invalid state detected")]
+    InvalidState {},
+
+    #[error("Insufficient over-collateralization factor")]
+    InsufficientOCF {},
+
+    #[error("Insufficient collateral provided")]
+    InsufficientCollateral {},
+
+    #[error("Insufficient funds available")]
+    InsufficientFunds {},
+
+    #[error("Position is not available for this operation")]
+    PositionNotAvailable {},
+
+    #[error("Option expired (expired at {expired:?})")]
+    OptionExpired { expired: u64 },
+
+    #[error("Option not expired (expires at {expires:?})")]
+    OptionNotExpired { expires: u64 },
 }
 
 pub type ContractResult<T> = Result<T, ContractError>;
