@@ -21,8 +21,26 @@ pub fn instantiate(
     let admin_addr = deps.api.addr_validate(&msg.admin)?;
     POOL_CONFIG.save(deps.storage, &msg.pool_config)?;
     ADMIN.save(deps.storage, &admin_addr)?;
+
+    // Initialize asset and collateral configurations
+    let asset_config = CoinConfig {
+        denom: msg.pool_config.asset_address.to_string(),
+        decimals: 6,  
+    };
+    ASSET_CONFIG.save(deps.storage, &asset_config)?;
+
+    let collateral_config = CoinConfig {
+        denom: msg.pool_config.collateral_address.to_string(),
+        decimals: 6,  
+    };
+    COLLATERAL_CONFIG.save(deps.storage, &collateral_config)?;
+
+    TOTAL_ASSET_AVAILABLE.save(deps.storage, &Uint128::zero())?;
+    TOTAL_COLLATERAL_AVAILABLE.save(deps.storage, &Uint128::zero())?;
+
     Ok(Response::default())
 }
+
 
 #[entry_point]
 pub fn execute(
@@ -172,7 +190,6 @@ fn add_liquidity(
         None => return Err(ContractError::InvalidFunds { denom: collateral_info.denom.clone() }),
     };
 
-    // Load current totals or initialize to zero if not present
     let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage).unwrap_or(Uint128::zero());
     let mut total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage).unwrap_or(Uint128::zero());
 
@@ -466,15 +483,12 @@ fn repay(
 
     Ok(Response::new().add_message(bank_msg))
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmwasm_std::{
-        coins, from_binary, Addr, BankMsg, Coin, Empty, Env, MessageInfo, Response, Storage, Uint128,
-    };
+    use cosmwasm_std::{coins, from_binary, Addr, BankMsg, Coin, Empty, Env, MessageInfo, Response, Storage, Uint128};
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-    use cw_multi_test::{App, BankSudo, Contract, ContractWrapper, Executor};
+    use cw_multi_test::{App, BankSudo, Contract, ContractWrapper, Executor, SudoMsg};
 
     // Create a mock contract for testing purposes
     fn mock_contract() -> Box<dyn Contract<Empty>> {
@@ -521,63 +535,122 @@ mod tests {
         assert_eq!(stored_owner, Addr::unchecked(owner));
     }
 
-   
     #[test]
     fn test_add_liquidity() {
         let mut app = App::default();
         let owner = "owner";
+        let user = Addr::unchecked("user");
     
         // Instantiate the contract
         let contract_addr = instantiate_contract(&mut app, owner);
-    
+
+        // Mock initial balances for the user
+        app.sudo(SudoMsg::Bank(BankSudo::Mint {
+            to_address: user.to_string(),
+            amount: vec![
+                Coin {
+                    denom: "asset_token".to_string(),
+                    amount: Uint128::new(10000),
+                },
+                Coin {
+                    denom: "collateral_token".to_string(),
+                    amount: Uint128::new(20000),
+                },
+            ],
+        })).unwrap();
+
+        let initial_asset_balance = app.wrap().query_balance(&user, "asset_token").unwrap();
+        let initial_collateral_balance = app.wrap().query_balance(&user, "collateral_token").unwrap();
+        println!("Initial asset balance: {}", initial_asset_balance.amount);
+        println!("Initial collateral balance: {}", initial_collateral_balance.amount);
+
+        // Define the amounts to add as liquidity
         let asset_amount = Uint128::new(1000);
         let collateral_amount = Uint128::new(2000);
-    
+
         let msg = ExecuteMsg::Transact(TransactMsg::AddLiquidity {});
-    
-        let user = "user";
-        let info = mock_info(user, &[
+
+        let info = mock_info(user.as_str(), &[
             Coin { denom: "asset_token".to_string(), amount: asset_amount },
             Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
         ]);
-    
+
         // Execute the add_liquidity message
-        let result = app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds);
-        assert!(result.is_ok(), "Execution should succeed");
-    
+        let result = app.execute_contract(user.clone(), contract_addr.clone(), &msg, &info.funds);
+
+        // Print the result for debugging
+        if result.is_err() {
+            println!("Execution failed: {:?}", result.unwrap_err());
+            assert!(false, "Execution should succeed");
+        } else {
+            // Print the response for debugging
+            println!("Execution succeeded: {:?}", result.unwrap());
+        }
+
         // Query and verify the updated totals
         let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
         let total_collateral_available: Uint128 = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetTotalCollateralAvailable {}).unwrap();
-    
+
         assert_eq!(total_asset_available, asset_amount);
         assert_eq!(total_collateral_available, collateral_amount);
+
+        let final_asset_balance = app.wrap().query_balance(&user, "asset_token").unwrap();
+        let final_collateral_balance = app.wrap().query_balance(&user, "collateral_token").unwrap();
+        println!("Final asset balance: {}", final_asset_balance.amount);
+        println!("Final collateral balance: {}", final_collateral_balance.amount);
+
+        assert_eq!(final_asset_balance.amount, Uint128::new(9000));
+        assert_eq!(final_collateral_balance.amount, Uint128::new(18000));
     }
+
+
+    
     
 
-    // #[test]
-    // fn test_deposit() {
-    //     let mut app = App::default();
-    //     let owner = "owner";
+    #[test]
+    fn test_deposit() {
+        let mut app = App::default();
+        let owner = "owner";
+        let mut app = App::default();
+        let owner = "owner";
+        let user = Addr::unchecked("user");
+    
+        // Instantiate the contract
+        let contract_addr = instantiate_contract(&mut app, owner);
 
-    //     let contract_addr = instantiate_contract(&mut app, owner);
+        // Mock initial balances for the user
+        app.sudo(SudoMsg::Bank(BankSudo::Mint {
+            to_address: user.to_string(),
+            amount: vec![
+                Coin {
+                    denom: "asset_token".to_string(),
+                    amount: Uint128::new(10000),
+                },
+                Coin {
+                    denom: "collateral_token".to_string(),
+                    amount: Uint128::new(20000),
+                },
+            ],
+        })).unwrap();
+        let contract_addr = instantiate_contract(&mut app, owner);
 
-    //     let asset_amount = Uint128::new(1000);
+        let asset_amount = Uint128::new(1000);
 
-    //     let msg = ExecuteMsg::Transact(TransactMsg::Deposit {});
+        let msg = ExecuteMsg::Transact(TransactMsg::Deposit {});
 
-    //     let user = "user";
-    //     let info = mock_info(user, &[
-    //         Coin { denom: "asset_token".to_string(), amount: asset_amount },
-    //     ]);
+        let user = "user";
+        let info = mock_info(user, &[
+            Coin { denom: "asset_token".to_string(), amount: asset_amount },
+        ]);
 
-    //     app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
+        app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
 
-    //     let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
-    //     assert_eq!(total_asset_available, asset_amount);
+        let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
+        assert_eq!(total_asset_available, asset_amount);
 
-    //     let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrinciple { user: user.to_string() }).unwrap();
-    //     assert_eq!(user_principle.0, asset_amount);
-    // }
+        let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrinciple { user: user.to_string() }).unwrap();
+        assert_eq!(user_principle.0, asset_amount);
+    }
 
     // #[test]
     // fn test_withdraw() {
