@@ -32,6 +32,8 @@ pub fn execute(
     msg: TransactMsg,
 ) -> ContractResult<Response> {
     match msg {
+        TransactMsg::AddLiquidity {} => add_liquidity(deps, env, info),
+
         TransactMsg::Deposit {} => deposit(deps, env, info),
 
         TransactMsg::WithdrawInterest {} => withdraw_interest(deps, env, info),
@@ -51,6 +53,31 @@ pub fn execute(
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> ContractResult<Binary> {
     query_handler(deps, env, msg)
 }
+
+
+fn add_liquidity(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+) -> ContractResult<Response> {
+
+    let asset_info: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
+    let collateral_info: CoinConfig = COLLATERAL_CONFIG.load(deps.storage)?;
+
+    let asset_amount = info.funds.iter().find(|coin| coin.denom == asset_info.denom).unwrap().amount;
+    let collateral_amount = info.funds.iter().find(|coin| coin.denom == collateral_info.denom).unwrap().amount;
+
+    let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
+    total_asset_available += asset_amount;
+    TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
+
+    let mut total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage)?;
+    total_collateral_available += collateral_amount;
+    TOTAL_COLLATERAL_AVAILABLE.save(deps.storage, &total_collateral_available)?;
+
+    Ok(Response::default())
+}
+
 
 fn liquidate(
     deps: DepsMut,
@@ -210,7 +237,7 @@ fn borrow(
     if last_collateral_time != last_principle_time {
         return Err(ContractError::InvalidState {});
     }
-    if principle_to_repay_by_user == Uint128::zero() && interest_to_repay_by_user == Uint128::zero() && collateral_submitted_by_user == Uint128::zero() {
+    if principle_to_repay_by_user == Uint128::zero() && interest_to_repay_by_user == Uint128::zero(){
         return Err(ContractError::PositionNotAvailable {});
     }
 

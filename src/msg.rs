@@ -14,6 +14,7 @@ pub struct InstantiateMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum TransactMsg {
+    AddLiquidity {},
     Deposit {},
     WithdrawInterest {},
     Withdraw {
