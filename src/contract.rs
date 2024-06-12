@@ -604,9 +604,6 @@ mod tests {
     }
 
 
-    
-    
-
     #[test]
     fn test_deposit() {
         let mut app = App::default();
@@ -615,7 +612,6 @@ mod tests {
         let owner = "owner";
         let user = Addr::unchecked("user");
     
-        // Instantiate the contract
         let contract_addr = instantiate_contract(&mut app, owner);
 
         // Mock initial balances for the user
@@ -652,69 +648,111 @@ mod tests {
         assert_eq!(user_principle.0, asset_amount);
     }
 
-    // #[test]
-    // fn test_withdraw() {
-    //     let mut app = App::default();
-    //     let owner = "owner";
+    #[test]
+    fn test_withdraw() {
+        let mut app = App::default();
+        let owner = "owner";
+        let mut app = App::default();
+        let owner = "owner";
+        let mut app = App::default();
+        let owner = "owner";
+        let user = Addr::unchecked("user");
+    
+        let contract_addr = instantiate_contract(&mut app, owner);
 
-    //     let contract_addr = instantiate_contract(&mut app, owner);
+        // Mock initial balances for the user
+        app.sudo(SudoMsg::Bank(BankSudo::Mint {
+            to_address: user.to_string(),
+            amount: vec![
+                Coin {
+                    denom: "asset_token".to_string(),
+                    amount: Uint128::new(10000),
+                },
+                Coin {
+                    denom: "collateral_token".to_string(),
+                    amount: Uint128::new(20000),
+                },
+            ],
+        })).unwrap();
+        let contract_addr = instantiate_contract(&mut app, owner);
 
-    //     let asset_amount = Uint128::new(1000);
-    //     let withdraw_amount = Uint128::new(500);
+        let asset_amount = Uint128::new(1000);
+        let withdraw_amount = Uint128::new(500);
 
-    //     let msg = ExecuteMsg::Transact(TransactMsg::Deposit {});
+        let msg = ExecuteMsg::Transact(TransactMsg::Deposit {});
 
-    //     let user = "user";
-    //     let info = mock_info(user, &[
-    //         Coin { denom: "asset_token".to_string(), amount: asset_amount },
-    //     ]);
+        let user = "user";
+        let info = mock_info(user, &[
+            Coin { denom: "asset_token".to_string(), amount: asset_amount },
+        ]);
 
-    //     app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
+        app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
 
-    //     let msg = ExecuteMsg::Transact(TransactMsg::Withdraw { amount: withdraw_amount });
+        let msg = ExecuteMsg::Transact(TransactMsg::Withdraw { amount: withdraw_amount });
 
-    //     app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &[]).unwrap();
+        app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &[]).unwrap();
 
-    //     let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
-    //     assert_eq!(total_asset_available, asset_amount - withdraw_amount);
+        let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
+        assert_eq!(total_asset_available, asset_amount - withdraw_amount);
 
-    //     let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrinciple { user: user.to_string() }).unwrap();
-    //     assert_eq!(user_principle.0, asset_amount - withdraw_amount);
-    // }
+        let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrinciple { user: user.to_string() }).unwrap();
+        assert_eq!(user_principle.0, asset_amount - withdraw_amount);
+    }
 
-    // #[test]
-    // fn test_borrow() {
-    //     let mut app = App::default();
-    //     let owner = "owner";
+    #[test]
+    fn test_borrow() {
+        let mut app = App::default();
+        let owner = "owner";
+        let mut app = App::default();
+        let owner = "owner";
+        let mut app = App::default();
+        let owner = "owner";
+        let user = Addr::unchecked("user");
+    
+        let contract_addr = instantiate_contract(&mut app, owner);
 
-    //     let contract_addr = instantiate_contract(&mut app, owner);
+        // Mock initial balances for the user
+        app.sudo(SudoMsg::Bank(BankSudo::Mint {
+            to_address: user.to_string(),
+            amount: vec![
+                Coin {
+                    denom: "asset_token".to_string(),
+                    amount: Uint128::new(10000),
+                },
+                Coin {
+                    denom: "collateral_token".to_string(),
+                    amount: Uint128::new(20000),
+                },
+            ],
+        })).unwrap();
+        let contract_addr = instantiate_contract(&mut app, owner);
 
-    //     let asset_amount = Uint128::new(1000);
-    //     let collateral_amount = Uint128::new(2000);
-    //     let borrow_amount = Uint128::new(500);
+        let asset_amount = Uint128::new(1000);
+        let collateral_amount = Uint128::new(2000);
+        let borrow_amount = Uint128::new(500);
 
-    //     let msg = ExecuteMsg::Transact(TransactMsg::AddLiquidity {});
+        let msg = ExecuteMsg::Transact(TransactMsg::AddLiquidity {});
 
-    //     let info = mock_info(owner, &[
-    //         Coin { denom: "asset_token".to_string(), amount: asset_amount },
-    //         Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
-    //     ]);
+        let info = mock_info(owner, &[
+            Coin { denom: "asset_token".to_string(), amount: asset_amount },
+            Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
+        ]);
 
-    //     app.execute_contract(Addr::unchecked(owner), contract_addr.clone(), &msg, &info.funds).unwrap();
+        app.execute_contract(Addr::unchecked(owner), contract_addr.clone(), &msg, &info.funds).unwrap();
 
-    //     let msg = ExecuteMsg::Transact(TransactMsg::Borrow { amount: borrow_amount });
+        let msg = ExecuteMsg::Transact(TransactMsg::Borrow { amount: borrow_amount });
 
-    //     let user = "user";
-    //     let info = mock_info(user, &[
-    //         Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
-    //     ]);
+        let user = "user";
+        let info = mock_info(user, &[
+            Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
+        ]);
 
-    //     app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
+        app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
 
-    //     let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
-    //     assert_eq!(total_asset_available, asset_amount - borrow_amount);
+        let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
+        assert_eq!(total_asset_available, asset_amount - borrow_amount);
 
-    //     let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrincipleToRepay { user: user.to_string() }).unwrap();
-    //     assert_eq!(user_principle.0, borrow_amount);
-    // }
+        let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrincipleToRepay { user: user.to_string() }).unwrap();
+        assert_eq!(user_principle.0, borrow_amount);
+    }
 }
