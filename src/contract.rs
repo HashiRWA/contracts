@@ -161,19 +161,38 @@ fn add_liquidity(
     let asset_info: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
     let collateral_info: CoinConfig = COLLATERAL_CONFIG.load(deps.storage)?;
 
-    let asset_amount = info.funds.iter().find(|coin| coin.denom == asset_info.denom).unwrap().amount;
-    let collateral_amount = info.funds.iter().find(|coin| coin.denom == collateral_info.denom).unwrap().amount;
+    // Ensure funds include the required assets and collateral
+    let asset_amount = match info.funds.iter().find(|coin| coin.denom == asset_info.denom) {
+        Some(coin) => coin.amount,
+        None => return Err(ContractError::InvalidFunds { denom: asset_info.denom.clone() }),
+    };
 
-    let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
-    total_asset_available += asset_amount;
+    let collateral_amount = match info.funds.iter().find(|coin| coin.denom == collateral_info.denom) {
+        Some(coin) => coin.amount,
+        None => return Err(ContractError::InvalidFunds { denom: collateral_info.denom.clone() }),
+    };
+
+    // Load current totals or initialize to zero if not present
+    let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage).unwrap_or(Uint128::zero());
+    let mut total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage).unwrap_or(Uint128::zero());
+
+    // Safely add the amounts to the current totals
+    total_asset_available = total_asset_available.checked_add(asset_amount)
+        .map_err(|_| ContractError::Overflow {})?;
+    total_collateral_available = total_collateral_available.checked_add(collateral_amount)
+        .map_err(|_| ContractError::Overflow {})?;
+
+    // Save updated totals
     TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
-
-    let mut total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage)?;
-    total_collateral_available += collateral_amount;
     TOTAL_COLLATERAL_AVAILABLE.save(deps.storage, &total_collateral_available)?;
 
-    Ok(Response::default())
+    Ok(Response::new()
+        .add_attribute("action", "add_liquidity")
+        .add_attribute("total_asset_available", total_asset_available.to_string())
+        .add_attribute("total_collateral_available", total_collateral_available.to_string()))
 }
+
+
 
 fn liquidate(
     deps: DepsMut,
@@ -502,32 +521,38 @@ mod tests {
         assert_eq!(stored_owner, Addr::unchecked(owner));
     }
 
+   
     #[test]
     fn test_add_liquidity() {
         let mut app = App::default();
         let owner = "owner";
-
+    
+        // Instantiate the contract
         let contract_addr = instantiate_contract(&mut app, owner);
-
+    
         let asset_amount = Uint128::new(1000);
         let collateral_amount = Uint128::new(2000);
-
+    
         let msg = ExecuteMsg::Transact(TransactMsg::AddLiquidity {});
-
+    
         let user = "user";
         let info = mock_info(user, &[
             Coin { denom: "asset_token".to_string(), amount: asset_amount },
             Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
         ]);
-
-        app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
-
+    
+        // Execute the add_liquidity message
+        let result = app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds);
+        assert!(result.is_ok(), "Execution should succeed");
+    
+        // Query and verify the updated totals
         let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
         let total_collateral_available: Uint128 = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetTotalCollateralAvailable {}).unwrap();
-
+    
         assert_eq!(total_asset_available, asset_amount);
         assert_eq!(total_collateral_available, collateral_amount);
     }
+    
 
     // #[test]
     // fn test_deposit() {
