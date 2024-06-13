@@ -18,18 +18,18 @@ pub fn instantiate(
     msg: InstantiateMsg,
 ) -> ContractResult<Response> {
     let admin_addr = deps.api.addr_validate(&msg.admin)?;
-    POOL_CONFIG.save(deps.storage, &msg.pool_config)?;
+    POOL_CONFIG.save(deps.storage, &msg.config)?;
     ADMIN.save(deps.storage, &admin_addr)?;
 
     // Initialize asset and collateral configurations
     let asset_config = CoinConfig {
-        denom: msg.pool_config.asset_address.to_string(),
+        denom: msg.config.asset.to_string(),
         decimals: 6,  
     };
     ASSET_CONFIG.save(deps.storage, &asset_config)?;
 
     let collateral_config = CoinConfig {
-        denom: msg.pool_config.collateral_address.to_string(),
+        denom: msg.config.collateral.to_string(),
         decimals: 6,  
     };
     COLLATERAL_CONFIG.save(deps.storage, &collateral_config)?;
@@ -79,7 +79,7 @@ pub fn execute(
 }
 
 #[entry_point]
-pub fn query(deps: Deps, info: MessageInfo, _env: Env, msg: QueryMsg) -> ContractResult<Binary> {
+pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> ContractResult<Binary> {
     match msg {
         QueryMsg::PoolConfig {} => {
             let pool_config = POOL_CONFIG.load(deps.storage)?;
@@ -136,25 +136,24 @@ pub fn query(deps: Deps, info: MessageInfo, _env: Env, msg: QueryMsg) -> Contrac
             Ok(to_json_binary(&format!("Max liquidation amount for {}", user))?)
         },
 
-        QueryMsg::GetDepositQuote { amount } => {
-            let quote = quote_deposit(deps, info, amount)?;
+        QueryMsg::GetDepositQuote { user, amount } => {
+            let quote = quote_deposit(deps, user,  amount)?;
             Ok(to_json_binary(&quote)?)
         },
 
-        QueryMsg::GetLoanQuote { amount } => {
-            let quote = quote_loan(deps, info, amount)?;
+        QueryMsg::GetLoanQuote { user, amount} => {
+            let quote = quote_loan(deps, user, amount)?;
             Ok(to_json_binary(&quote)?)
         },
         
-        QueryMsg::GetWithdrawablePositions { } => {
-            let quote = get_withdrawable_positions(deps, info)?;
+        QueryMsg::GetWithdrawablePositions { user,} => {
+            let quote = get_withdrawable_positions(deps, user)?;
             Ok(to_json_binary(&quote)?)
         },
-        QueryMsg::GetRepayablePositions{ } => {
-            let quote = get_repayable_positions(deps, info)?;
+        QueryMsg::GetRepayablePositions { user, } => {
+            let quote = get_repayable_positions(deps, user)?;
             Ok(to_json_binary(&quote)?)
         },
-
     }
 }
 
@@ -167,36 +166,34 @@ pub fn query(deps: Deps, info: MessageInfo, _env: Env, msg: QueryMsg) -> Contrac
 
 fn quote_deposit(
     deps: Deps,
-    info : MessageInfo,
+    user: Addr,
     amount: Uint128,
   ) -> ContractResult<( (Uint128, Uint128),  (Uint128, Uint128))> {
     let pool_config = POOL_CONFIG.load(deps.storage)?;
     let asset_config = ASSET_CONFIG.load(deps.storage)?;
   
-    let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
+    let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &user)?.unwrap_or(Uint128::zero());
   
-    let (principle_already_deployed, last_deposit_time) = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+    let (principle_already_deployed, last_deposit_time) = PRINCIPLE_DEPLOYED.may_load(deps.storage, &user)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
   
-    let time_period = get_time_period(Timestamp::from_seconds(pool_config.pool_maturation_date), last_deposit_time);
+    let time_period = get_time_period(Timestamp::from_seconds(pool_config.maturationdate), last_deposit_time);
   
   
     // without the current position
     // at maturity
   
-    let interest = calculate_simple_interest(principle_already_deployed, pool_config.pool_lend_interest_rate, time_period);
+    let interest = calculate_simple_interest(principle_already_deployed, pool_config.lendinterestrate, time_period);
     let user_position_without_new_amount = (principle_already_deployed, interest_earned_by_user + interest);
   
     // with the current position
     // at maturity
   
-    let interest = calculate_simple_interest(principle_already_deployed + amount, pool_config.pool_lend_interest_rate, time_period);
+    let interest = calculate_simple_interest(principle_already_deployed + amount, pool_config.lendinterestrate, time_period);
     let user_position_with_new_amount = (principle_already_deployed + amount, interest_earned_by_user + interest);
   
     Ok((user_position_without_new_amount, user_position_with_new_amount))
   
   }
-  
-  
   
   
   // fn quoteLoan()
@@ -207,31 +204,30 @@ fn quote_deposit(
   // 1) given the value they have currently entered
   // 2) given the total position that they have in the pool
   
-  
   fn quote_loan(
     deps: Deps,
-    info : MessageInfo,
+    user:Addr,
     amount: Uint128,
   ) -> ContractResult<((Uint128, Uint128, Uint128),(Uint128, Uint128, Uint128))> {
     let pool_config = POOL_CONFIG.load(deps.storage)?;
   
-    let interest_to_repay_by_user = INTEREST_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
-    let principle_to_repay_by_user = PRINCIPLE_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-    let collateral_submitted_by_user = COLLATERAL_SUBMITTED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+    let interest_to_repay_by_user = INTEREST_TO_REPAY.may_load(deps.storage, &user)?.unwrap_or(Uint128::zero());
+    let principle_to_repay_by_user = PRINCIPLE_TO_REPAY.may_load(deps.storage, &user)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+    let collateral_submitted_by_user = COLLATERAL_SUBMITTED.may_load(deps.storage, &user)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
   
-    let time_period = get_time_period(Timestamp::from_seconds(pool_config.pool_maturation_date), principle_to_repay_by_user.1);
+    let time_period = get_time_period(Timestamp::from_seconds(pool_config.maturationdate), principle_to_repay_by_user.1);
   
     // without the current position
     // at maturity
   
-    let interest = calculate_simple_interest(principle_to_repay_by_user.0, pool_config.pool_debt_interest_rate, time_period);
+    let interest = calculate_simple_interest(principle_to_repay_by_user.0, pool_config.debtinterestrate, time_period);
     let user_position_without_new_amount = (principle_to_repay_by_user.0, interest_to_repay_by_user + interest, collateral_submitted_by_user.0);
   
     // with the current position
     // at maturity
   
-    let interest = calculate_simple_interest(principle_to_repay_by_user.0 + amount, pool_config.pool_debt_interest_rate, time_period);
-    let new_collateral = pool_config.min_overcollateralization_factor * pool_config.pool_strike_price * amount;
+    let interest = calculate_simple_interest(principle_to_repay_by_user.0 + amount, pool_config.debtinterestrate, time_period);
+    let new_collateral = pool_config.overcollateralizationfactor * pool_config.strikeprice * amount;
     let user_position_with_new_amount = (principle_to_repay_by_user.0 + amount, interest_to_repay_by_user + interest, collateral_submitted_by_user.0 + new_collateral);
   
     Ok((user_position_without_new_amount, user_position_with_new_amount))
@@ -246,16 +242,16 @@ fn quote_deposit(
   
   fn get_withdrawable_positions(
     deps: Deps,
-    info : MessageInfo,
+    user: Addr,
   ) -> ContractResult<(Uint128, Uint128)> {
     let pool_config = POOL_CONFIG.load(deps.storage)?;
   
-    let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
-    let (principle_already_deployed, last_deposit_time) = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+    let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &user)?.unwrap_or(Uint128::zero());
+    let (principle_already_deployed, last_deposit_time) = PRINCIPLE_DEPLOYED.may_load(deps.storage, &user)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
   
-    let time_period = get_time_period(Timestamp::from_seconds(pool_config.pool_maturation_date), last_deposit_time);
+    let time_period = get_time_period(Timestamp::from_seconds(pool_config.maturationdate), last_deposit_time);
   
-    let interest = calculate_simple_interest(principle_already_deployed, pool_config.pool_lend_interest_rate, time_period);
+    let interest = calculate_simple_interest(principle_already_deployed, pool_config.lendinterestrate, time_period);
     let user_position = (principle_already_deployed, interest_earned_by_user + interest);
   
     Ok(user_position)
@@ -270,17 +266,17 @@ fn quote_deposit(
   
   fn get_repayable_positions(
     deps: Deps,
-    info : MessageInfo,
+    user: Addr,
   ) -> ContractResult<(Uint128, Uint128, Uint128)> {
     let pool_config = POOL_CONFIG.load(deps.storage)?;
   
-    let interest_to_repay_by_user = INTEREST_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
-    let principle_to_repay_by_user = PRINCIPLE_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-    let collateral_submitted_by_user = COLLATERAL_SUBMITTED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+    let interest_to_repay_by_user = INTEREST_TO_REPAY.may_load(deps.storage, &user)?.unwrap_or(Uint128::zero());
+    let principle_to_repay_by_user = PRINCIPLE_TO_REPAY.may_load(deps.storage, &user)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+    let collateral_submitted_by_user = COLLATERAL_SUBMITTED.may_load(deps.storage, &user)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
   
-    let time_period = get_time_period(Timestamp::from_seconds(pool_config.pool_maturation_date), principle_to_repay_by_user.1);
+    let time_period = get_time_period(Timestamp::from_seconds(pool_config.maturationdate), principle_to_repay_by_user.1);
   
-    let interest = calculate_simple_interest(principle_to_repay_by_user.0, pool_config.pool_debt_interest_rate, time_period);
+    let interest = calculate_simple_interest(principle_to_repay_by_user.0, pool_config.debtinterestrate, time_period);
     let user_position = (principle_to_repay_by_user.0, interest_to_repay_by_user + interest, collateral_submitted_by_user.0);
   
     Ok(user_position)
@@ -402,7 +398,7 @@ fn deposit(
     let asset_config: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
     let now = env.block.time.seconds();
 
-    if now > pool_config.pool_maturation_date {
+    if now > pool_config.maturationdate {
         return Err(ContractError::PoolMatured {});
     }
 
@@ -410,7 +406,7 @@ fn deposit(
     let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
 
     let time_period = get_time_period(Timestamp::from_seconds(now), principle_deployed.1);
-    let interest_since_last_deposit = calculate_simple_interest(principle_deployed.0, pool_config.pool_lend_interest_rate, time_period);
+    let interest_since_last_deposit = calculate_simple_interest(principle_deployed.0, pool_config.lendinterestrate, time_period);
 
     let principle_to_deposit = info.funds.iter().find(|coin| coin.denom == asset_config.denom).unwrap().amount;
 
@@ -444,7 +440,7 @@ fn withdraw(
     }
 
     let time_period = get_time_period(Timestamp::from_seconds(now), last_deposit_time);
-    let interest = calculate_simple_interest(principle_deployed, pool_config.pool_lend_interest_rate, time_period);
+    let interest = calculate_simple_interest(principle_deployed, pool_config.lendinterestrate, time_period);
 
     INTEREST_EARNED.save(deps.storage, &info.sender, &(interest_earned_by_user + interest))?;
     PRINCIPLE_DEPLOYED.save(deps.storage, &info.sender, &(principle_deployed - amount, Timestamp::from_seconds(now)))?;
@@ -492,7 +488,7 @@ fn borrow(
     let pool_config: PoolConfig = POOL_CONFIG.load(deps.storage)?;
     let now = env.block.time.seconds();
 
-    if now > pool_config.pool_maturation_date {
+    if now > pool_config.maturationdate {
         return Err(ContractError::PoolMatured {});
     }
 
@@ -516,8 +512,8 @@ fn borrow(
     }
 
     let collateral_amount_sent = info.funds.iter().find(|coin| coin.denom == collateral_config.denom).unwrap().amount;
-    let strike = pool_config.pool_strike_price;
-    let current_ocf = pool_config.min_overcollateralization_factor;
+    let strike = pool_config.strikeprice;
+    let current_ocf = pool_config.overcollateralizationfactor;
 
     if current_ocf < Uint128::new(1) {
         return Err(ContractError::InsufficientOCF {});
@@ -529,7 +525,7 @@ fn borrow(
     }
 
     let time_period = get_time_period(Timestamp::from_seconds(now), last_principle_time);
-    let interest_on_current_principle = calculate_simple_interest(principle_to_repay_by_user, pool_config.pool_debt_interest_rate, time_period);
+    let interest_on_current_principle = calculate_simple_interest(principle_to_repay_by_user, pool_config.debtinterestrate, time_period);
 
     INTEREST_TO_REPAY.save(deps.storage, &info.sender, &(interest_to_repay_by_user + interest_on_current_principle))?;
     PRINCIPLE_TO_REPAY.save(deps.storage, &info.sender, &(principle_to_repay_by_user + amount, Timestamp::from_seconds(now)))?;
@@ -567,11 +563,11 @@ fn repay(
     let pool_config: PoolConfig = POOL_CONFIG.load(deps.storage)?;
     let now = env.block.time.seconds();
 
-    if now > pool_config.pool_maturation_date {
+    if now > pool_config.maturationdate {
         return Err(ContractError::CollateralForfeited {});
     }
 
-    let amount_to_repay = info.funds.iter().find(|coin| coin.denom == pool_config.asset_address.to_string()).unwrap().amount;
+    let amount_to_repay = info.funds.iter().find(|coin| coin.denom == pool_config.asset.to_string()).unwrap().amount;
 
     let (collateral_submitted_by_user, last_collateral_time) = COLLATERAL_SUBMITTED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
     let (principle_to_repay_by_user, last_principle_time) = PRINCIPLE_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
@@ -589,10 +585,10 @@ fn repay(
     }
 
     let time_period = get_time_period(Timestamp::from_seconds(now), last_principle_time);
-    let interest_on_current_principle = calculate_simple_interest(principle_to_repay_by_user, pool_config.pool_debt_interest_rate, time_period);
+    let interest_on_current_principle = calculate_simple_interest(principle_to_repay_by_user, pool_config.debtinterestrate, time_period);
 
-    let strike = pool_config.pool_strike_price;
-    let current_ocf = pool_config.min_overcollateralization_factor;
+    let strike = pool_config.strikeprice;
+    let current_ocf = pool_config.overcollateralizationfactor;
 
     if current_ocf < Uint128::new(1) {
         return Err(ContractError::InsufficientOCF {});
@@ -619,7 +615,7 @@ fn repay(
     let bank_msg = BankMsg::Send {
         to_address: info.sender.to_string(),
         amount: vec![Coin {
-            denom: pool_config.collateral_address.to_string(),
+            denom: pool_config.collateral.to_string(),
             amount: needed_collateral,
         }],
     };
@@ -647,16 +643,16 @@ mod tests {
         let contract_id = app.store_code(mock_contract());
         let msg = InstantiateMsg {
             admin: owner.to_string(),
-            pool_config: PoolConfig {
-                pool_name: "Test Pool".to_string(),
-                pool_symbol: "TP".to_string(),
-                pool_maturation_date: 1950000000,  
-                pool_debt_interest_rate: Uint128::new(5),
-                pool_strike_price: Uint128::new(2),
-                pool_lend_interest_rate: Uint128::new(3),
-                min_overcollateralization_factor: Uint128::new(2),
-                asset_address: Addr::unchecked("asset_token"),
-                collateral_address: Addr::unchecked("collateral_token"),
+            config: PoolConfig {
+                name: "Test Pool".to_string(),
+                symbol: "TP".to_string(),
+                maturationdate: 1950000000,  
+                debtinterestrate: Uint128::new(5),
+                strikeprice: Uint128::new(2),
+                lendinterestrate: Uint128::new(3),
+                overcollateralizationfactor: Uint128::new(2),
+                asset: Addr::unchecked("asset_token"),
+                collateral: Addr::unchecked("collateral_token"),
             },
             oracle: "oracle_address".to_string(),  
         };
