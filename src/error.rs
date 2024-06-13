@@ -8,6 +8,9 @@ pub enum ContractError {
 
     #[error("Unauthorized")]
     Unauthorized {},
+    #[error("InvalidFunds")]
+    InvalidFunds {denom : String},
+
 
     #[error("Pool has matured, cannot perform this operation")]
     PoolMatured {},
@@ -17,6 +20,9 @@ pub enum ContractError {
 
     #[error("Position is undercollateralized")]
     Undercollateralized {},
+
+    #[error("Overflow")]
+    Overflow {},
 
     #[error("Excessive funds provided")]
     ExcessiveFunds {},

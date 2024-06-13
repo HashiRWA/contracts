@@ -17,4 +17,4 @@ cw-storage-plus = "0.13.3"
 schemars = "0.8.10"         
 
 [dev-dependencies]
-cw-multi-test = "0.13.4"
+cw-multi-test = { version = "0.13", features = ["staking"] }  # Ensure this matches the version of CosmWasm you are using
