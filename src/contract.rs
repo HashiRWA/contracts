@@ -192,7 +192,6 @@ fn add_liquidity(
     total_collateral_available = total_collateral_available.checked_add(collateral_amount)
         .map_err(|_| ContractError::Overflow {})?;
 
-    // Save updated totals
     TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
     TOTAL_COLLATERAL_AVAILABLE.save(deps.storage, &total_collateral_available)?;
 
@@ -361,9 +360,10 @@ fn borrow(
     if last_collateral_time != last_principle_time {
         return Err(ContractError::InvalidState {});
     }
-    if principle_to_repay_by_user == Uint128::zero() && interest_to_repay_by_user == Uint128::zero(){
-        return Err(ContractError::PositionNotAvailable {});
-    }
+    // if principle_to_repay_by_user == Uint128::zero() && interest_to_repay_by_user == Uint128::zero(){
+    //     return Err(ContractError::PositionNotAvailable {});
+    // } 
+    // first time users cant borrow if this check is in place 
 
     let collateral_amount_sent = info.funds.iter().find(|coin| coin.denom == collateral_config.denom).unwrap().amount;
     let strike = pool_config.pool_strike_price;
@@ -704,6 +704,20 @@ mod tests {
                 },
             ],
         })).unwrap();
+
+        app.sudo(SudoMsg::Bank(BankSudo::Mint {
+            to_address: owner.to_string(),
+            amount: vec![
+                Coin {
+                    denom: "asset_token".to_string(),
+                    amount: Uint128::new(10000),
+                },
+                Coin {
+                    denom: "collateral_token".to_string(),
+                    amount: Uint128::new(20000),
+                },
+            ],
+        })).unwrap();
         let contract_addr = instantiate_contract(&mut app, owner);
 
         let asset_amount = Uint128::new(1000);
@@ -711,7 +725,19 @@ mod tests {
         let borrow_amount = Uint128::new(500);
 
         let msg = ExecuteMsg::Transact(TransactMsg::AddLiquidity {});
-
+        app.sudo(SudoMsg::Bank(BankSudo::Mint {
+            to_address: contract_addr.to_string(),
+            amount: vec![
+                Coin {
+                    denom: "asset_token".to_string(),
+                    amount: Uint128::new(10000),
+                },
+                Coin {
+                    denom: "collateral_token".to_string(),
+                    amount: Uint128::new(20000),
+                },
+            ],
+        })).unwrap();
         let info = mock_info(owner, &[
             Coin { denom: "asset_token".to_string(), amount: asset_amount },
             Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
@@ -734,4 +760,83 @@ mod tests {
         let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrincipleToRepay { user: user.to_string() }).unwrap();
         assert_eq!(user_principle.0, borrow_amount);
     }
+
+    
+    #[test]
+    fn test_repay() {
+        let mut app = App::default();
+        let owner = "owner";
+        let user = Addr::unchecked("user");
+    
+        let contract_addr = instantiate_contract(&mut app, owner);
+    
+        app.sudo(SudoMsg::Bank(BankSudo::Mint {
+            to_address: user.to_string(),
+            amount: vec![
+                Coin {
+                    denom: "asset_token".to_string(),
+                    amount: Uint128::new(10000),
+                },
+                Coin {
+                    denom: "collateral_token".to_string(),
+                    amount: Uint128::new(20000),
+                },
+            ],
+        })).unwrap();
+    
+        app.sudo(SudoMsg::Bank(BankSudo::Mint {
+            to_address: contract_addr.to_string(),
+            amount: vec![
+                Coin {
+                    denom: "asset_token".to_string(),
+                    amount: Uint128::new(10000),
+                },
+            ],
+        })).unwrap();
+    
+        let add_liquidity_msg = ExecuteMsg::Transact(TransactMsg::AddLiquidity {});
+        let add_liquidity_info = mock_info(user.as_str(), &[
+            Coin { denom: "asset_token".to_string(), amount: Uint128::new(1000) },
+            Coin { denom: "collateral_token".to_string(), amount: Uint128::new(2000) },
+        ]);
+    
+        app.execute_contract(user.clone(), contract_addr.clone(), &add_liquidity_msg, &add_liquidity_info.funds).unwrap();
+    
+        let borrow_amount = Uint128::new(500);
+        let borrow_msg = ExecuteMsg::Transact(TransactMsg::Borrow { amount: borrow_amount });
+        let borrow_info = mock_info(user.as_str(), &[
+            Coin { denom: "collateral_token".to_string(), amount: Uint128::new(2000) },
+        ]);
+    
+        app.execute_contract(user.clone(), contract_addr.clone(), &borrow_msg, &borrow_info.funds).unwrap();
+    
+        let repay_msg = ExecuteMsg::Transact(TransactMsg::Repay {});
+        let repay_info = mock_info(user.as_str(), &[
+            Coin { denom: "asset_token".to_string(), amount: borrow_amount },
+        ]);
+        let contract_asset_balance = app.wrap().query_balance(&contract_addr, "asset_token").unwrap();
+        assert_eq!(contract_asset_balance.amount, Uint128::new(10000 + 1000 -500));
+        let result = app.execute_contract(user.clone(), contract_addr.clone(), &repay_msg, &repay_info.funds);
+    
+        if result.is_err() {
+            println!("Execution failed: {:?}", result.unwrap_err());
+            assert!(false, "Execution should succeed");
+        } else {
+            println!("Execution succeeded: {:?}", result.unwrap());
+        }
+    
+        let user_principle_to_repay: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetUserPrincipleToRepay { user: user.to_string() }).unwrap();
+        assert_eq!(user_principle_to_repay.0, Uint128::zero());
+    
+        let contract_asset_balance = app.wrap().query_balance(&contract_addr, "asset_token").unwrap();
+        assert_eq!(contract_asset_balance.amount, Uint128::new(10000 + 1000 ));
+    
+        let contract_collateral_balance = app.wrap().query_balance(&contract_addr, "collateral_token").unwrap();
+        assert_eq!(contract_collateral_balance.amount, Uint128::new(2000)); 
+    
+        println!("Contract asset balance: {}", contract_asset_balance.amount);
+        println!("Contract collateral balance: {}", contract_collateral_balance.amount);
+    }
+    
+
 }
