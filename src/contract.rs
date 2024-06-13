@@ -8,7 +8,6 @@ use crate::state::{
     NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE,
 };
 use crate::types::{CoinConfig, PoolConfig};
-use crate::query::query_handler;
 use cosmwasm_std::to_json_binary;
 use cosmwasm_std::to_binary;
 #[entry_point]
@@ -127,21 +126,21 @@ pub fn query(deps: Deps, info: MessageInfo, _env: Env, msg: QueryMsg) -> Contrac
         },
 
         QueryMsg::GetDepositQuote { amount } => {
-            let quote = quoteDeposit(deps, info, amount)?;
+            let quote = quote_deposit(deps, info, amount)?;
             Ok(to_json_binary(&quote)?)
         },
 
         QueryMsg::GetLoanQuote { amount } => {
-            let quote = quoteLoan(deps, info, amount)?;
+            let quote = quote_loan(deps, info, amount)?;
             Ok(to_json_binary(&quote)?)
         },
         
         QueryMsg::GetWithdrawablePositions { } => {
-            let quote = getWithdrawablePositions(deps, info)?;
+            let quote = get_withdrawable_positions(deps, info)?;
             Ok(to_json_binary(&quote)?)
         },
         QueryMsg::GetRepayablePositions{ } => {
-            let quote = getRepayablePositions(deps, info)?;
+            let quote = get_repayable_positions(deps, info)?;
             Ok(to_json_binary(&quote)?)
         },
 
@@ -155,7 +154,7 @@ pub fn query(deps: Deps, info: MessageInfo, _env: Env, msg: QueryMsg) -> Contrac
 // 1) given the value they have currently entered
 // 2) given the total position that they have in the pool
 
-fn quoteDeposit(
+fn quote_deposit(
     deps: Deps,
     info : MessageInfo,
     amount: Uint128,
@@ -198,14 +197,12 @@ fn quoteDeposit(
   // 2) given the total position that they have in the pool
   
   
-  fn quoteLoan(
+  fn quote_loan(
     deps: Deps,
     info : MessageInfo,
     amount: Uint128,
   ) -> ContractResult<((Uint128, Uint128, Uint128),(Uint128, Uint128, Uint128))> {
     let pool_config = POOL_CONFIG.load(deps.storage)?;
-    let asset_config = ASSET_CONFIG.load(deps.storage)?;
-    let collateral_config = COLLATERAL_CONFIG.load(deps.storage)?;
   
     let interest_to_repay_by_user = INTEREST_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
     let principle_to_repay_by_user = PRINCIPLE_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
@@ -236,12 +233,11 @@ fn quoteDeposit(
   // interest the user has earned till now
   // clubbed with pool config
   
-  fn getWithdrawablePositions(
+  fn get_withdrawable_positions(
     deps: Deps,
     info : MessageInfo,
   ) -> ContractResult<(Uint128, Uint128)> {
     let pool_config = POOL_CONFIG.load(deps.storage)?;
-    let asset_config = ASSET_CONFIG.load(deps.storage)?;
   
     let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
     let (principle_already_deployed, last_deposit_time) = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
@@ -261,13 +257,11 @@ fn quoteDeposit(
   // interest the user has to repay to the pool
   // clubbed with pool config
   
-  fn getRepayablePositions(
+  fn get_repayable_positions(
     deps: Deps,
     info : MessageInfo,
   ) -> ContractResult<(Uint128, Uint128, Uint128)> {
     let pool_config = POOL_CONFIG.load(deps.storage)?;
-    let asset_config = ASSET_CONFIG.load(deps.storage)?;
-    let collateral_config = COLLATERAL_CONFIG.load(deps.storage)?;
   
     let interest_to_repay_by_user = INTEREST_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
     let principle_to_repay_by_user = PRINCIPLE_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
