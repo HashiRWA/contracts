@@ -3,7 +3,6 @@ mod error;
 pub mod types;
 pub mod msg;
 pub mod state;
-pub mod query;
 pub mod external;
 // pub mod simple_fd;
 

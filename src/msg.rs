@@ -1,4 +1,4 @@
-use cosmwasm_std::Uint128;
+use cosmwasm_std::{Addr, Uint128};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -6,7 +6,7 @@ use crate::types::PoolConfig;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct InstantiateMsg {
-    pub pool_config: PoolConfig,
+    pub config: PoolConfig,
     pub oracle: String,
     pub admin: String,
 }
@@ -47,6 +47,7 @@ pub enum ExecuteMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum QueryMsg {
+    PoolConfig {},
     Assets {},
     UserAssetsInfo {
         user: String,
@@ -70,4 +71,23 @@ pub enum QueryMsg {
     GetTotalCollateralAvailable {},
     GetUserPrinciple { user: String },
     GetUserPrincipleToRepay { user: String },
+
+    GetDepositQuote {
+        user: Addr,
+        amount: Uint128,
+    },
+
+    GetWithdrawablePositions {
+        user: Addr,
+    },
+
+    GetLoanQuote {
+        user: Addr,
+        amount: Uint128,
+    },
+
+    GetRepayablePositions {
+        user: Addr,
+    },
+
 }
