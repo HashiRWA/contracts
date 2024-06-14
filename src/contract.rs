@@ -6,7 +6,7 @@ use cw20_base::allowances::{
     execute_transfer_from, query_allowance,
 };
 use crate::error::{ContractError, ContractResult};
-use crate::msg::{DepositMsg, ExecuteMsg, InstantiateMsg, QueryMsg, TransactMsg};
+use crate::msg::{DepositMsg, ExecuteMsg, InstantiateMsg, QueryMsg, TransactMsg, WithdrawMsg};
 use crate::state::{
     ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, PRINCIPLE_TO_REPAY, COLLATERAL_SUBMITTED, INTEREST_EARNED, INTEREST_TO_REPAY,
     NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE,
@@ -62,7 +62,7 @@ pub fn execute(
             TransactMsg::Receive(msg) => execute_receive(deps, env, info, msg),
 
             TransactMsg::Deposit(msg) => execute_deposit(deps, env, info, msg),
-            TransactMsg::Withdraw { amount } => withdraw(deps, env, info, amount),
+            TransactMsg::Withdraw (msg) => execute_withdraw(deps, env, info, msg),
 
             TransactMsg::AddLiquidity {} => add_liquidity(deps, env, info),
             TransactMsg::WithdrawInterest {} => withdraw_interest(deps, env, info),
@@ -526,44 +526,67 @@ fn execute_deposit(
 }
 
 
-fn withdraw(
+
+// There's no fund to be added to the contract here.
+// Here the contract will send a Transfer call from itself to the token
+// to send money to the user!!!
+fn execute_withdraw(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    amount: Uint128,
+    msg: WithdrawMsg,
 ) -> ContractResult<Response> {
+    // This nonpayable function ensures that no coins are sent to the contract
+    nonpayable(&info);
+
     let pool_config: PoolConfig = POOL_CONFIG.load(deps.storage)?;
     let asset_config: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
     let now = env.block.time.seconds();
 
+    let withdraw_details: WithdrawMsg = from_json(&to_json_binary(&msg)?)?;
+    let withdraw_amount = withdraw_details.amount;
+
+    if asset_config.denom != withdraw_details.denom {
+        return Err(ContractError::InvalidAsset {});
+    }
+   
     let (principle_deployed, last_deposit_time) = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
     let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
 
     if principle_deployed == Uint128::zero() {
         return Err(ContractError::PositionNotAvailable {});
-    } else if principle_deployed < amount {
+    } else if principle_deployed < withdraw_amount {
         return Err(ContractError::InsufficientFunds {});
     }
 
-    let time_period = get_time_period(Timestamp::from_seconds(now), last_deposit_time);
+    // compare which is earlier, now or pool config maturity, return which ever is earlier
+    // this ensures that user is not earing interest after the pool has matured
+    let min_time = std::cmp::min(now, pool_config.maturationdate);
+
+    let time_period = get_time_period(Timestamp::from_seconds(min_time), last_deposit_time);
     let interest = calculate_simple_interest(principle_deployed, pool_config.lendinterestrate, time_period);
 
     INTEREST_EARNED.save(deps.storage, &info.sender, &(interest_earned_by_user + interest))?;
-    PRINCIPLE_DEPLOYED.save(deps.storage, &info.sender, &(principle_deployed - amount, Timestamp::from_seconds(now)))?;
+    PRINCIPLE_DEPLOYED.save(deps.storage, &info.sender, &(principle_deployed - withdraw_amount, Timestamp::from_seconds(now)))?;
 
     let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
-    total_asset_available -= amount;
+    total_asset_available -= withdraw_amount;
     TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
 
-    let bank_msg = BankMsg::Send {
-        to_address: info.sender.to_string(),
-        amount: vec![Coin {
-            denom: asset_config.denom.clone().to_string(),
-            amount,
-        }],
+    // Preparing the msg for transferring the funds here.
+    // We need to send this msg to the cw20 contract to transfer funds from the  contract's account to user's account
+    let transfer_msg = Cw20ExecuteMsg::Transfer {
+        recipient : info.sender.clone().to_string(),
+        amount: withdraw_amount,
     };
 
-    Ok(Response::default().add_message(bank_msg))
+    let msg = SubMsg::new(WasmMsg::Execute {
+        contract_addr: asset_config.denom.clone().to_string(),
+        msg: to_json_binary(&transfer_msg)?,
+        funds: vec![],
+    });
+
+    Ok(Response::new().add_submessage(msg))
 }
 
 fn withdraw_interest(

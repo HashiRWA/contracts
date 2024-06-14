@@ -19,11 +19,9 @@ pub enum TransactMsg {
     /// This accepts a properly-encoded ReceiveMsg from a cw20 contract
     Receive(Cw20ReceiveMsg),
     Deposit (DepositMsg),
+    Withdraw (WithdrawMsg),
     AddLiquidity {},
     WithdrawInterest {},
-    Withdraw {
-        amount: Uint128,
-    },
     Borrow {
         amount: Uint128,
     },
