@@ -6,6 +6,9 @@ pub enum ContractError {
     #[error("{0}")]
     Std(#[from] StdError),
 
+    #[error("Bank Contract : Invalid Asset")]
+    InvalidAsset {},
+
     #[error("Bank Contract : Std Error")]
     StdErr { kind: String, detail: String },
 

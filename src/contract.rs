@@ -60,12 +60,12 @@ pub fn execute(
 
             // TODO: Receive will impl Cw20ReceiveMsg, just to recieve the msg that the funds have been transferred
             TransactMsg::Receive(msg) => execute_receive(deps, env, info, msg),
-            
 
             TransactMsg::Deposit(msg) => execute_deposit(deps, env, info, msg),
+            TransactMsg::Withdraw { amount } => withdraw(deps, env, info, amount),
+
             TransactMsg::AddLiquidity {} => add_liquidity(deps, env, info),
             TransactMsg::WithdrawInterest {} => withdraw_interest(deps, env, info),
-            TransactMsg::Withdraw { amount } => withdraw(deps, env, info, amount),
             TransactMsg::Borrow { amount } => borrow(deps, env, info, amount),
             TransactMsg::Repay {} => repay(deps, env, info),
             TransactMsg::Liquidate {} => liquidate(deps, env, info),
@@ -128,144 +128,6 @@ pub fn fetch_allowance(
     }))?;
     Ok(res)
 }
-
-
-// Docs: 
-// this is a helper function that transfers cw20 tokens from the user's account to this contract account
-// asks for the amount, recipient, and cw20 address and returns the response
-
-
-// Docs: 
-// This function is used to make a deposit from the user's account to th
-//  contract account and after that it implements the logic of the deposit
-
-fn execute_deposit(
-    deps: DepsMut,
-    env: Env,
-    info: MessageInfo,
-    msg: DepositMsg,
-) -> Result<Response, ContractError> {
-    // This nonpayable function ensures that no coins are sent to the contract
-    nonpayable(&info);
-
-    let deposit_details: DepositMsg = from_json(&to_json_binary(&msg)?)?;
-
-    let asset_config = ASSET_CONFIG.load(deps.storage)?;
-    let pool_config: PoolConfig = POOL_CONFIG.load(deps.storage)?;
-  
-    let asset_amount = deposit_details.amount;
-    
-    let now = env.block.time.seconds();
-
-    if now > pool_config.maturationdate {
-        return Err(ContractError::PoolMatured {});
-    }
-
-    // This contract needs to check if the user has given enough allowance to this contract to transfer funds on a  cw20 token detailed in msg
-    //  asset config is the configuration of the asset that the user wants to deposit
-
-    // check with asset cw20 if user has given allowance to this contract to transfer funds
-    let allowance_and_expiry: AllowanceResponse = fetch_allowance(
-        deps.as_ref(),
-        env.contract.address.clone(),
-        info.sender.clone(),
-        asset_config.denom.clone(),
-    )?;
-
-    // if the allowance is lesser than the msg.amount to transfer, 
-    // or the allowance has expired, then return an error
-    if allowance_and_expiry.allowance < asset_amount {
-        return Err(ContractError::InsufficientAllowance {});
-    }
-    else if allowance_and_expiry.expires.is_expired(&env.block) {
-        return Err(ContractError::AllowanceExpired {});
-    }
-
-
-    // Preparing the msg for transferring the funds here.
-    // We need to send this msg to the cw20 contract to transfer funds from the user's account to this contract account
-    let transfer_msg = Cw20ExecuteMsg::TransferFrom {
-        owner: info.sender.clone().to_string(),
-        recipient: env.contract.address.clone().to_string(),
-        amount: asset_amount,
-    };
-    
-    // from here we have deposit logic
-
-     let principle_deployed = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-     let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
- 
-     let time_period = get_time_period(Timestamp::from_seconds(now), principle_deployed.1);
-     let interest_since_last_deposit = calculate_simple_interest(principle_deployed.0, pool_config.lendinterestrate, time_period);
- 
-     let principle_to_deposit = asset_amount;
- 
-     INTEREST_EARNED.save(deps.storage, &info.sender, &(interest_earned_by_user + interest_since_last_deposit))?;
-     PRINCIPLE_DEPLOYED.save(deps.storage, &info.sender, &(principle_deployed.0 + principle_to_deposit, Timestamp::from_seconds(now)))?;
- 
-     let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
-     total_asset_available += principle_to_deposit;
-     TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
- 
-
-    let msg = SubMsg::new(WasmMsg::Execute {
-        contract_addr: asset_config.denom.clone().to_string(),
-        msg: to_json_binary(&transfer_msg)?,
-        funds: vec![],
-    });
-
-    Ok(Response::new().add_submessage(msg))
-}
-
-
-// Now this will not accept any coins, only a Cw20ReceiveMsg
-// TODO: currently it looks like this can accept any CW20 tokens, we need a method to whitelist only the ones we need
-fn deposit(
-    deps: DepsMut,
-    env: Env,
-    info: MessageInfo,
-    wrapper: Cw20ReceiveMsg,
-) -> Result<Response, ContractError> {
-    // This nonpayable function ensures that no coins are sent to the contract
-    nonpayable(&info);
- 
-    let pool_config: PoolConfig = POOL_CONFIG.load(deps.storage)?;
-    let asset_config: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
-    let now = env.block.time.seconds();
-
-    if now > pool_config.maturationdate {
-        return Err(ContractError::PoolMatured {});
-    }
-   
-    let amount_sent_info = Amount::Cw20(Cw20Coin {
-        address: info.sender.to_string(),
-        amount: wrapper.amount,
-    });
-
-    // from here we have deposit logic
-
-    let principle_deployed = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-    let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
-
-    let time_period = get_time_period(Timestamp::from_seconds(now), principle_deployed.1);
-    let interest_since_last_deposit = calculate_simple_interest(principle_deployed.0, pool_config.lendinterestrate, time_period);
-
-    let principle_to_deposit = amount_sent_info.amount();
-
-    INTEREST_EARNED.save(deps.storage, &info.sender, &(interest_earned_by_user + interest_since_last_deposit))?;
-    PRINCIPLE_DEPLOYED.save(deps.storage, &info.sender, &(principle_deployed.0 + principle_to_deposit, Timestamp::from_seconds(now)))?;
-
-    let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
-    total_asset_available += principle_to_deposit;
-    TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
-
-    Ok(Response::default())
-}
-
-
-
-
-
 
 
 
@@ -577,50 +439,91 @@ fn get_time_period(now: Timestamp, time: Timestamp) -> u64 {
     now.seconds() - time.seconds()
 }
 
+// Docs: COMPLETED
+// This function is used to make a deposit from the user's account to th
+// contract account and after that it implements the logic of the deposit
 
-// Now this will not accept any coins, only a Cw20ReceiveMsg
-// TODO: currently it looks like this can accept any CW20 tokens, we need a method to whitelist only the ones we need
-// fn deposit(
-//     deps: DepsMut,
-//     env: Env,
-//     info: MessageInfo,
-//     wrapper: Cw20ReceiveMsg,
-// ) -> Result<Response, ContractError> {
-//     // This nonpayable function ensures that no coins are sent to the contract
-//     nonpayable(&info);
+fn execute_deposit(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    msg: DepositMsg,
+) -> Result<Response, ContractError> {
+    // This nonpayable function ensures that no coins are sent to the contract
+    nonpayable(&info);
+
+    let deposit_details: DepositMsg = from_json(&to_json_binary(&msg)?)?;
+
+    let asset_config = ASSET_CONFIG.load(deps.storage)?;
+    let pool_config: PoolConfig = POOL_CONFIG.load(deps.storage)?;
+
+    if asset_config.denom != deposit_details.denom {
+        return Err(ContractError::InvalidAsset {});
+    }
+  
+    let asset_amount = deposit_details.amount;
+    
+    let now = env.block.time.seconds();
+
+    if now > pool_config.maturationdate {
+        return Err(ContractError::PoolMatured {});
+    }
+
+    // This contract needs to check if the user has given enough allowance to this contract to transfer funds on a  cw20 token detailed in msg
+    // asset config is the configuration of the asset that the user wants to deposit
+
+    // check with asset cw20 if user has given allowance to this contract to transfer funds
+    let allowance_and_expiry: AllowanceResponse = fetch_allowance(
+        deps.as_ref(),
+        env.contract.address.clone(),
+        info.sender.clone(),
+        asset_config.denom.clone(),
+    )?;
+
+    // if the allowance is lesser than the msg.amount to transfer, 
+    // or the allowance has expired, then return an error
+    if allowance_and_expiry.allowance < asset_amount {
+        return Err(ContractError::InsufficientAllowance {});
+    }
+    else if allowance_and_expiry.expires.is_expired(&env.block) {
+        return Err(ContractError::AllowanceExpired {});
+    }
+
+
+    // Preparing the msg for transferring the funds here.
+    // We need to send this msg to the cw20 contract to transfer funds from the user's account to this contract account
+    let transfer_msg = Cw20ExecuteMsg::TransferFrom {
+        owner: info.sender.clone().to_string(),
+        recipient: env.contract.address.clone().to_string(),
+        amount: asset_amount,
+    };
+    
+    // from here we have deposit logic
+
+     let principle_deployed = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+     let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
  
-//     let pool_config: PoolConfig = POOL_CONFIG.load(deps.storage)?;
-//     let asset_config: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
-//     let now = env.block.time.seconds();
+     let time_period = get_time_period(Timestamp::from_seconds(now), principle_deployed.1);
+     let interest_since_last_deposit = calculate_simple_interest(principle_deployed.0, pool_config.lendinterestrate, time_period);
+ 
+     let principle_to_deposit = asset_amount;
+ 
+     INTEREST_EARNED.save(deps.storage, &info.sender, &(interest_earned_by_user + interest_since_last_deposit))?;
+     PRINCIPLE_DEPLOYED.save(deps.storage, &info.sender, &(principle_deployed.0 + principle_to_deposit, Timestamp::from_seconds(now)))?;
+ 
+     let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
+     total_asset_available += principle_to_deposit;
+     TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
+ 
 
-//     if now > pool_config.maturationdate {
-//         return Err(ContractError::PoolMatured {});
-//     }
-   
-//     let amount_sent_info = Amount::Cw20(Cw20Coin {
-//         address: info.sender.to_string(),
-//         amount: wrapper.amount,
-//     });
+    let msg = SubMsg::new(WasmMsg::Execute {
+        contract_addr: asset_config.denom.clone().to_string(),
+        msg: to_json_binary(&transfer_msg)?,
+        funds: vec![],
+    });
 
-//     // from here we have deposit logic
-
-//     let principle_deployed = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-//     let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
-
-//     let time_period = get_time_period(Timestamp::from_seconds(now), principle_deployed.1);
-//     let interest_since_last_deposit = calculate_simple_interest(principle_deployed.0, pool_config.lendinterestrate, time_period);
-
-//     let principle_to_deposit = amount_sent_info.amount();
-
-//     INTEREST_EARNED.save(deps.storage, &info.sender, &(interest_earned_by_user + interest_since_last_deposit))?;
-//     PRINCIPLE_DEPLOYED.save(deps.storage, &info.sender, &(principle_deployed.0 + principle_to_deposit, Timestamp::from_seconds(now)))?;
-
-//     let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
-//     total_asset_available += principle_to_deposit;
-//     TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
-
-//     Ok(Response::default())
-// }
+    Ok(Response::new().add_submessage(msg))
+}
 
 
 fn withdraw(

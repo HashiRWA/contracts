@@ -34,9 +34,13 @@ pub enum TransactMsg {
 
 #[cw_serde]
 pub struct DepositMsg {
-    pub denom : String,
+    pub denom : Addr,
     pub amount: Uint128,
-    pub string: String,
+}
+#[cw_serde]
+pub struct WithdrawMsg {
+    pub denom : Addr,
+    pub amount: Uint128,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
