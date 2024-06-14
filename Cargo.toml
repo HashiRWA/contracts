@@ -16,6 +16,7 @@ semver = { version = "0.11.0"}
 cw-utils = "0.16.0"
 cw2 = "0.16.0"
 cw20 = "0.16.0"
+cw20-base ={version = "0.16.0", features = ["library"]}
 cosmwasm-schema = "1.1.5"
 cosmwasm-std = "1.1.5"
 cw-storage-plus = "0.16.0"

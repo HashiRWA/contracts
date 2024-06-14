@@ -6,52 +6,58 @@ pub enum ContractError {
     #[error("{0}")]
     Std(#[from] StdError),
 
-    #[error("Std Error")]
+    #[error("Bank Contract : Std Error")]
     StdErr { kind: String, detail: String },
 
-    #[error("Unauthorized")]
+    #[error("Bank Contract : Unauthorized")]
     Unauthorized {},
-    #[error("InvalidFunds")]
+
+    #[error("Bank Contract: Allowance Expired")]
+    AllowanceExpired {},
+
+    #[error("Bank Contract : InvalidFunds")]
     InvalidFunds {denom : String},
 
+    #[error ("Bank Contract : Insufficient Allowance")]
+    InsufficientAllowance {},
 
-    #[error("Pool has matured, cannot perform this operation")]
+    #[error("Bank Contract : Pool has matured, cannot perform this operation")]
     PoolMatured {},
 
-    #[error("Pool has not matured yet")]
+    #[error("Bank Contract : Pool has not matured yet")]
     PoolNotMatured {},
 
-    #[error("Position is undercollateralized")]
+    #[error("Bank Contract : Position is undercollateralized")]
     Undercollateralized {},
 
-    #[error("Overflow")]
+    #[error("Bank Contract : Overflow")]
     Overflow {},
 
-    #[error("Excessive funds provided")]
+    #[error("Bank Contract : Excessive funds provided")]
     ExcessiveFunds {},
 
-    #[error("Pool expired and collateral has been forfeited")]
+    #[error("Bank Contract : Pool expired and collateral has been forfeited")]
     CollateralForfeited {},
 
-    #[error("Invalid state detected")]
+    #[error("Bank Contract : Invalid state detected")]
     InvalidState {},
 
-    #[error("Insufficient over-collateralization factor")]
+    #[error("Bank Contract : Insufficient over-collateralization factor")]
     InsufficientOCF {},
 
-    #[error("Insufficient collateral provided")]
+    #[error("Bank Contract : Insufficient collateral provided")]
     InsufficientCollateral {},
 
-    #[error("Insufficient funds available")]
+    #[error("Bank Contract : Insufficient funds available")]
     InsufficientFunds {},
 
-    #[error("Position is not available for this operation")]
+    #[error("Bank Contract : Position is not available for this operation")]
     PositionNotAvailable {},
 
-    #[error("Option expired (expired at {expired:?})")]
+    #[error("Bank Contract : Option expired (expired at {expired:?})")]
     OptionExpired { expired: u64 },
 
-    #[error("Option not expired (expires at {expires:?})")]
+    #[error("Bank Contract : Option not expired (expires at {expires:?})")]
     OptionNotExpired { expires: u64 },
 }
 

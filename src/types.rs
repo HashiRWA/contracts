@@ -20,7 +20,7 @@ pub struct PoolConfig {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CoinConfig {
-    pub denom: String,
+    pub denom: Addr,
     pub decimals: u16,
 }
 

@@ -1,3 +1,4 @@
+use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Uint128};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -16,7 +17,8 @@ pub struct InstantiateMsg {
 #[serde(rename_all = "camelCase")]
 pub enum TransactMsg {
     /// This accepts a properly-encoded ReceiveMsg from a cw20 contract
-    Deposit(Cw20ReceiveMsg),
+    Receive(Cw20ReceiveMsg),
+    Deposit (DepositMsg),
     AddLiquidity {},
     WithdrawInterest {},
     Withdraw {
@@ -27,6 +29,14 @@ pub enum TransactMsg {
     },
     Repay {},
     Liquidate {},
+}
+
+
+#[cw_serde]
+pub struct DepositMsg {
+    pub denom : String,
+    pub amount: Uint128,
+    pub string: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
