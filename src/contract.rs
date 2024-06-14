@@ -63,9 +63,9 @@ pub fn execute(
 
             TransactMsg::Deposit(msg) => execute_deposit(deps, env, info, msg),
             TransactMsg::Withdraw (msg) => execute_withdraw(deps, env, info, msg),
+            TransactMsg::WithdrawInterest {} => execute_withdraw_interest(deps, env, info),
 
             TransactMsg::AddLiquidity {} => add_liquidity(deps, env, info),
-            TransactMsg::WithdrawInterest {} => withdraw_interest(deps, env, info),
             TransactMsg::Borrow { amount } => borrow(deps, env, info, amount),
             TransactMsg::Repay {} => repay(deps, env, info),
             TransactMsg::Liquidate {} => liquidate(deps, env, info),
@@ -522,7 +522,9 @@ fn execute_deposit(
         funds: vec![],
     });
 
-    Ok(Response::new().add_submessage(msg))
+    Ok(Response::new()
+    .add_attribute("action", "deposit")
+    .add_submessage(msg))
 }
 
 
@@ -586,26 +588,43 @@ fn execute_withdraw(
         funds: vec![],
     });
 
-    Ok(Response::new().add_submessage(msg))
+    Ok(Response::new()
+    .add_attribute("action", "withdraw")
+    .add_submessage(msg))
 }
 
-fn withdraw_interest(
+fn execute_withdraw_interest(
     deps: DepsMut,
     _env: Env,
     info: MessageInfo,
 ) -> ContractResult<Response> {
+    // This nonpayable function ensures that no coins are sent to the contract
+    nonpayable(&info);
+
     let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
+
+    // TODO: could have used a 'revert if no interest' here
+
     INTEREST_EARNED.save(deps.storage, &info.sender, &Uint128::zero())?;
 
     let asset_config: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
-    let bank_msg = BankMsg::Send {
-        to_address: info.sender.to_string(),
-        amount: vec![Coin {
-            denom: asset_config.denom.clone().to_string(),
-            amount: interest_earned_by_user,
-        }],
+    
+    // Preparing the msg for transferring the funds here.
+    // We need to send this msg to the cw20 contract to transfer funds from the contract's account to user's account
+    let transfer_msg = Cw20ExecuteMsg::Transfer {
+        recipient : info.sender.clone().to_string(),
+        amount: interest_earned_by_user,
     };
-    Ok(Response::new().add_message(bank_msg))
+
+    let msg = SubMsg::new(WasmMsg::Execute {
+        contract_addr: asset_config.denom.clone().to_string(),
+        msg: to_json_binary(&transfer_msg)?,
+        funds: vec![],
+    });
+
+    Ok(Response::new()
+    .add_attribute("action", "withdraw_interest")
+    .add_submessage(msg))
 }
 
 fn borrow(
