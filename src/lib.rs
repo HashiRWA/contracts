@@ -1,4 +1,5 @@
 pub mod contract;
+pub mod amount;
 mod error;
 pub mod types;
 pub mod msg;

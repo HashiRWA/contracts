@@ -1,6 +1,7 @@
 use cosmwasm_std::{Addr, Uint128};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use cw20::Cw20ReceiveMsg;
 
 use crate::types::PoolConfig;
 
@@ -14,8 +15,9 @@ pub struct InstantiateMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum TransactMsg {
+    /// This accepts a properly-encoded ReceiveMsg from a cw20 contract
+    Deposit(Cw20ReceiveMsg),
     AddLiquidity {},
-    Deposit {},
     WithdrawInterest {},
     Withdraw {
         amount: Uint128,

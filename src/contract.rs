@@ -1,14 +1,18 @@
 use cosmwasm_std::{
-    entry_point, Addr, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, QueryRequest, Response, Timestamp, Uint128
+    entry_point, from_binary, from_json, Addr, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, QueryRequest, Response, Timestamp, Uint128
 };
+use cw20::{Balance,Cw20ReceiveMsg, Cw20ExecuteMsg};
 use crate::error::{ContractError, ContractResult};
 use crate::msg::{InstantiateMsg, QueryMsg, TransactMsg, ExecuteMsg};
 use crate::state::{
     ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, PRINCIPLE_TO_REPAY, COLLATERAL_SUBMITTED, INTEREST_EARNED, INTEREST_TO_REPAY,
     NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE,
 };
+use crate::amount::Amount;
 use crate::types::{CoinConfig, PoolConfig};
 use cosmwasm_std::to_json_binary;
+use cw_utils::{maybe_addr, nonpayable, one_coin};
+
 use cosmwasm_std::to_binary;
 #[entry_point]
 pub fn instantiate(
@@ -50,8 +54,8 @@ pub fn execute(
 ) -> ContractResult<Response> {
     match msg {
         ExecuteMsg::Transact(transact_msg) => match transact_msg {
+            TransactMsg::Deposit(msg) => deposit(deps, env, info , msg),
             TransactMsg::AddLiquidity {} => add_liquidity(deps, env, info),
-            TransactMsg::Deposit {} => deposit(deps, env, info),
             TransactMsg::WithdrawInterest {} => withdraw_interest(deps, env, info),
             TransactMsg::Withdraw { amount } => withdraw(deps, env, info, amount),
             TransactMsg::Borrow { amount } => borrow(deps, env, info, amount),
@@ -347,8 +351,6 @@ fn add_liquidity(
         .add_attribute("total_collateral_available", total_collateral_available.to_string()))
 }
 
-
-
 fn liquidate(
     deps: DepsMut,
     _env: Env,
@@ -388,11 +390,19 @@ fn get_time_period(now: Timestamp, time: Timestamp) -> u64 {
     now.seconds() - time.seconds()
 }
 
+
+// Now this will not accept any coins, only a Cw20ReceiveMsg
+// TODO: currently it looks like this can accept any CW20 tokens, we need a method to whitelist only the ones we need
 fn deposit(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-) -> ContractResult<Response> {
+    wrapper: Cw20ReceiveMsg,
+) -> Result<Response, ContractError> {
+    // This nonpayable function ensures that no coins are sent to the contract
+    nonpayable(&info);
+    let msg: ExecuteMsg = from_json(&wrapper.msg)?;
+ 
     let pool_config: PoolConfig = POOL_CONFIG.load(deps.storage)?;
     let asset_config: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
     let now = env.block.time.seconds();
@@ -400,6 +410,13 @@ fn deposit(
     if now > pool_config.maturationdate {
         return Err(ContractError::PoolMatured {});
     }
+   
+    let amount_sent_info = Amount::Cw20(Cw20Coin {
+        address: info.sender.to_string(),
+        amount: wrapper.amount,
+    });
+
+    // from here we have deposit logic
 
     let principle_deployed = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
     let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
@@ -407,7 +424,7 @@ fn deposit(
     let time_period = get_time_period(Timestamp::from_seconds(now), principle_deployed.1);
     let interest_since_last_deposit = calculate_simple_interest(principle_deployed.0, pool_config.lendinterestrate, time_period);
 
-    let principle_to_deposit = info.funds.iter().find(|coin| coin.denom == asset_config.denom).unwrap().amount;
+    let principle_to_deposit = amount_sent_info.amount;
 
     INTEREST_EARNED.save(deps.storage, &info.sender, &(interest_earned_by_user + interest_since_last_deposit))?;
     PRINCIPLE_DEPLOYED.save(deps.storage, &info.sender, &(principle_deployed.0 + principle_to_deposit, Timestamp::from_seconds(now)))?;
@@ -418,6 +435,7 @@ fn deposit(
 
     Ok(Response::default())
 }
+
 
 fn withdraw(
     deps: DepsMut,
