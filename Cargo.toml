@@ -1,5 +1,4 @@
 [workspace]
-members = ["src/oracle/oracle_contract"]
 
 [package]
 name = "hashirwa_contracts"
@@ -10,17 +9,19 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-cosmwasm-std = { version = "1.0.0-beta8", features = ["staking"] }
 serde = { version = "1.0.103", default-features = false, features = ["derive"] }
-thiserror = "1.0"
 schemars = "0.8.10"    
-cw-utils = { version = "0.13.3"}
-cw2 = { version = "0.13.3"}
-cw20 = { version = "0.13.3"}
-cw-storage-plus = "0.13.3"
 cw-controllers = { version = "0.13.3"}
 semver = { version = "0.11.0"}
-cosmwasm_schema = { version = "0.13.3"}
+cw-utils = "0.16.0"
+cw2 = "0.16.0"
+cw20 = "0.16.0"
+cosmwasm-schema = "1.1.5"
+cosmwasm-std = "1.1.5"
+cw-storage-plus = "0.16.0"
+thiserror = "1.0.31"
+hex = "0.3.2"
+sha2 = "0.8.2"
 
 [dev-dependencies]
 cw-multi-test = { version = "0.13", features = ["staking"] }  # Ensure this matches the version of CosmWasm you are using

@@ -6,6 +6,9 @@ pub enum ContractError {
     #[error("{0}")]
     Std(#[from] StdError),
 
+    #[error("Std Error")]
+    StdErr { kind: String, detail: String },
+
     #[error("Unauthorized")]
     Unauthorized {},
     #[error("InvalidFunds")]

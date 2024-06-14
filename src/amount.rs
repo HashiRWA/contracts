@@ -54,7 +54,10 @@ impl Amount {
 
     /// convert the amount into u64
     pub fn u64_amount(&self) -> Result<u64, ContractError> {
-        Ok(self.amount().u128().try_into()?)
+        Ok(self.amount().u128().try_into().map_err(|_| ContractError::StdErr {
+            kind: "ConversionError".to_string(),
+            detail: "Amount too large to convert to u64".to_string(),
+        })?)
     }
 
     pub fn is_empty(&self) -> bool {

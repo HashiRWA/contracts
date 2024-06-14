@@ -1,7 +1,7 @@
 use cosmwasm_std::{
     entry_point, from_binary, from_json, Addr, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, QueryRequest, Response, Timestamp, Uint128
 };
-use cw20::{Balance,Cw20ReceiveMsg, Cw20ExecuteMsg};
+use cw20::{Balance, Cw20Coin, Cw20ExecuteMsg, Cw20ReceiveMsg};
 use crate::error::{ContractError, ContractResult};
 use crate::msg::{InstantiateMsg, QueryMsg, TransactMsg, ExecuteMsg};
 use crate::state::{
@@ -424,7 +424,7 @@ fn deposit(
     let time_period = get_time_period(Timestamp::from_seconds(now), principle_deployed.1);
     let interest_since_last_deposit = calculate_simple_interest(principle_deployed.0, pool_config.lendinterestrate, time_period);
 
-    let principle_to_deposit = amount_sent_info.amount;
+    let principle_to_deposit = amount_sent_info.amount();
 
     INTEREST_EARNED.save(deps.storage, &info.sender, &(interest_earned_by_user + interest_since_last_deposit))?;
     PRINCIPLE_DEPLOYED.save(deps.storage, &info.sender, &(principle_deployed.0 + principle_to_deposit, Timestamp::from_seconds(now)))?;
