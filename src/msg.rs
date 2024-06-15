@@ -23,10 +23,7 @@ pub enum TransactMsg {
     Loan (LoanMsg),
     Repay (RepayMsg),
 
-    AddLiquidity {},
     WithdrawInterest {},
-    
-    Liquidate {},
 }
 
 
@@ -59,62 +56,26 @@ pub struct LoanMsg {
 #[serde(rename_all = "camelCase")]
 pub enum ExecuteMsg {
     Transact(TransactMsg),
-    UpdateUserAssetInfo {
-        user_addr: String, 
-    },
-    UpdateAsset {
-        denom: String,
-        decimals: u16,
-        target_utilization_rate_bps: u32,
-        min_rate: u32,
-        optimal_rate: u32,
-        max_rate: u32,
-    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum QueryMsg {
-    PoolConfig {},
-    Assets {},
-    UserAssetsInfo {
-        user: String,
+    AllDetails {
+        user: Addr
     },
-    UserAssetInfo {
-        user: String,
-        denom: String,
-    },
-    UserData {
-        user: String,
-    },
-    AssetInfo {
-        denom: String,
-    },
-    AssetsInfo {},
-    MaxLiquidationAmount {
-        user: String,
-    },
-    GetOwner {},
-    GetTotalAssetAvailable {},
-    GetTotalCollateralAvailable {},
-    GetUserPrinciple { user: String },
-    GetUserPrincipleToRepay { user: String },
 
     GetDepositQuote {
         user: Addr,
         amount: Uint128,
     },
 
-    GetWithdrawablePositions {
+    GetWithdrawableAndRepayablePositions {
         user: Addr,
     },
 
     GetLoanQuote {
         amount: Uint128,
-    },
-
-    GetRepayablePositions {
-        user: Addr,
     },
 
     GetRepayQuote {

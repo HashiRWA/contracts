@@ -1,21 +1,18 @@
 use cosmwasm_std::{
-    entry_point, from_binary, from_json, Addr, BankMsg, Binary, BlockInfo, Coin, Deps, DepsMut, Env, MessageInfo, QuerierWrapper, QueryRequest, Response, StdResult, SubMsg, Timestamp, Uint128, WasmMsg, WasmQuery
+    entry_point, from_json, Addr, Binary, Deps, DepsMut, Env, MessageInfo, QueryRequest, Response, SubMsg, Timestamp, Uint128, WasmMsg, WasmQuery
 };
-use cw20::{AllowanceResponse, Balance, Cw20Coin, Cw20ExecuteMsg, Cw20QueryMsg, Cw20ReceiveMsg};
-use cw20_base::allowances::{
-    execute_transfer_from, query_allowance,
-};
+use cw20::{AllowanceResponse, Cw20ExecuteMsg, Cw20QueryMsg, Cw20ReceiveMsg};
 use crate::error::{ContractError, ContractResult};
 use crate::msg::{DepositMsg, ExecuteMsg, InstantiateMsg, LoanMsg, QueryMsg, RepayMsg, TransactMsg, WithdrawMsg};
 use crate::state::{
-    ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, COLLATERAL_SUBMITTED, INTEREST_EARNED, INTEREST_TO_REPAY, NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, PRINCIPLE_TO_REPAY, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE
+    ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, COLLATERAL_SUBMITTED, INTEREST_EARNED,
+    INTEREST_TO_REPAY, NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, PRINCIPLE_TO_REPAY,
+    TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE
 };
-use crate::amount::{self, Amount};
 use crate::types::{CoinConfig, PoolConfig};
 use cosmwasm_std::to_json_binary;
-use cw_utils::{maybe_addr, nonpayable, one_coin};
+use cw_utils::nonpayable;
 
-use cosmwasm_std::to_binary;
 #[entry_point]
 pub fn instantiate(
     deps: DepsMut,
@@ -46,7 +43,6 @@ pub fn instantiate(
     Ok(Response::default())
 }
 
-
 #[entry_point]
 pub fn execute(
     deps: DepsMut,
@@ -56,40 +52,16 @@ pub fn execute(
 ) -> ContractResult<Response> {
     match msg {
         ExecuteMsg::Transact(transact_msg) => match transact_msg {
-
-            // TODO: Receive will impl Cw20ReceiveMsg, just to recieve the msg that the funds have been transferred
             TransactMsg::Receive(msg) => execute_receive(deps, env, info, msg),
 
-            TransactMsg::Deposit(msg) => execute_deposit(deps, env, info, msg),
+            TransactMsg::Deposit (msg) => execute_deposit(deps, env, info, msg),
             TransactMsg::Withdraw (msg) => execute_withdraw(deps, env, info, msg),
             TransactMsg::WithdrawInterest {} => execute_withdraw_interest(deps, env, info),
-            TransactMsg::Loan(msg) => execute_loan(deps, env, info, msg),
-            TransactMsg::Repay(msg) => execute_repay(deps, env, info, msg),
-
-            TransactMsg::AddLiquidity {} => add_liquidity(deps, env, info),
-            TransactMsg::Liquidate {} => liquidate(deps, env, info),
+            TransactMsg::Loan (msg) => execute_loan(deps, env, info, msg),
+            TransactMsg::Repay (msg) => execute_repay(deps, env, info, msg),
         },
-        ExecuteMsg::UpdateUserAssetInfo { user_addr } => update_user_asset_info(deps, user_addr),
-        ExecuteMsg::UpdateAsset {
-            denom,
-            decimals,
-            target_utilization_rate_bps,
-            min_rate,
-            optimal_rate,
-            max_rate,
-        } => update_asset(
-            deps,
-            denom,
-            decimals,
-            target_utilization_rate_bps,
-            min_rate,
-            optimal_rate,
-            max_rate,
-        ),
     }
 }
-
-
 
 // Docs :
 // This function is used to receive the mesaage that the funds have been transferred
@@ -103,9 +75,6 @@ fn execute_receive(
 ) -> ContractResult<Response> {
     Ok(Response::default())
 }
-
-
-
 
 // Docs: 
 // this is a helper function that fetches for allowance
@@ -128,64 +97,26 @@ pub fn fetch_allowance(
     Ok(res)
 }
 
-
-
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> ContractResult<Binary> {
     match msg {
-        QueryMsg::PoolConfig {} => {
+        QueryMsg::AllDetails {user} => {
             let pool_config = POOL_CONFIG.load(deps.storage)?;
-            Ok(to_json_binary(&pool_config)?)
-        },
-        QueryMsg::GetOwner {} => {
             let admin = ADMIN.load(deps.storage)?;
-            Ok(to_json_binary(&admin)?)
-        },
-        QueryMsg::GetTotalAssetAvailable {} => {
             let total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
-            Ok(to_json_binary(&total_asset_available)?)
-        },
-        QueryMsg::GetTotalCollateralAvailable {} => {
             let total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage)?;
-            Ok(to_json_binary(&total_collateral_available)?)
-        },
-        QueryMsg::GetUserPrinciple { user } => {
-            let user_addr = deps.api.addr_validate(&user)?;
-            let principle = PRINCIPLE_DEPLOYED.may_load(deps.storage, &user_addr)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-            Ok(to_json_binary(&principle)?)
-        },
-        QueryMsg::GetUserPrincipleToRepay { user } => {
-            let user_addr = deps.api.addr_validate(&user)?;
-            let principle_to_repay = PRINCIPLE_TO_REPAY.may_load(deps.storage, &user_addr)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-            Ok(to_json_binary(&principle_to_repay)?)
-        },
-        QueryMsg::Assets {} => {
- 
-            Ok(to_json_binary(&"Assets query response")?)
-        },
-        QueryMsg::UserAssetsInfo { user } => {
+            let user_clone = user.clone();
+            
+            let withdrawable_positions = get_withdrawable_positions(deps, user_clone)?;
+            let repayable_positions = get_repayable_positions(deps, user)?;
 
-            Ok(to_json_binary(&format!("User assets info for {}", user))?)
-        },
-        QueryMsg::UserAssetInfo { user, denom } => {
-
-            Ok(to_json_binary(&format!("User asset info for {} and denom {}", user, denom))?)
-        },
-        QueryMsg::UserData { user } => {
- 
-            Ok(to_json_binary(&format!("User data for {}", user))?)
-        },
-        QueryMsg::AssetInfo { denom } => {
-    
-            Ok(to_json_binary(&format!("Asset info for denom {}", denom))?)
-        },
-        QueryMsg::AssetsInfo {} => {
-
-            Ok(to_json_binary(&"All assets info")?)
-        },
-        QueryMsg::MaxLiquidationAmount { user } => {
-
-            Ok(to_json_binary(&format!("Max liquidation amount for {}", user))?)
+            let all_details = (
+                pool_config, admin, total_asset_available,
+                total_collateral_available,
+                withdrawable_positions,
+                repayable_positions
+            );
+            Ok(to_json_binary(&all_details)?)
         },
 
         QueryMsg::GetDepositQuote { user, amount } => {
@@ -193,26 +124,24 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> ContractResult<Binary> {
             Ok(to_json_binary(&quote)?)
         },
 
-        QueryMsg::GetLoanQuote { amount} => {
-            let quote = quote_loan(deps, _env, amount)?;
-            Ok(to_json_binary(&quote)?)
-        },
-        
-        QueryMsg::GetWithdrawablePositions { user,} => {
-            let quote = get_withdrawable_positions(deps, user)?;
-            Ok(to_json_binary(&quote)?)
-        },
-        QueryMsg::GetRepayablePositions { user, } => {
-            let quote = get_repayable_positions(deps, user)?;
-            Ok(to_json_binary(&quote)?)
-        },
         QueryMsg::GetRepayQuote{ user} => {
             let quote = quote_repay(deps, _env, user)?;
             Ok(to_json_binary(&quote)?)
         },
+
+        QueryMsg::GetLoanQuote { amount} => {
+            let quote: (Uint128, Uint128, Uint128) = quote_loan(deps, _env, amount)?;
+            Ok(to_json_binary(&quote)?)
+        },
+
+        QueryMsg::GetWithdrawableAndRepayablePositions { user,} => {
+            let user_clone = user.clone();
+            let quote_withdraw = get_withdrawable_positions(deps, user_clone)?;
+            let quote_repay = get_repayable_positions(deps, user)?;
+            Ok(to_json_binary(&(quote_withdraw, quote_repay))?)
+        },
     }
 }
-
 
 fn quote_repay(    
     deps: Deps,
@@ -256,9 +185,6 @@ fn quote_repay(
 
 }
   
-
-
-
 // fn quoteDeosit() 
 // This functions is used to calculate the 
 // amount of interest the user will earn till maturity
@@ -295,7 +221,6 @@ fn quote_deposit(
     Ok((user_position_without_new_amount, user_position_with_new_amount))
   
   }
-  
   
   // fn quoteLoan()
   // This function is used to calculate the amount of 
@@ -376,101 +301,6 @@ fn quote_deposit(
     Ok(user_position)
 }
 
-// Placeholder implementation for ExecuteMsg::UpdateUserAssetInfo
-fn update_user_asset_info(deps: DepsMut, user_addr: String) -> ContractResult<Response> {
-    // Placeholder logic, replace with actual implementation
-    Ok(Response::new().add_attribute("action", "update_user_asset_info").add_attribute("user_addr", user_addr))
-}
-
-// Placeholder implementation for ExecuteMsg::UpdateAsset
-fn update_asset(
-    deps: DepsMut,
-    denom: String,
-    decimals: u16,
-    target_utilization_rate_bps: u32,
-    min_rate: u32,
-    optimal_rate: u32,
-    max_rate: u32,
-) -> ContractResult<Response> {
-    // Placeholder logic, replace with actual implementation
-    Ok(Response::new()
-        .add_attribute("action", "update_asset")
-        .add_attribute("denom", denom)
-        .add_attribute("decimals", decimals.to_string())
-        .add_attribute("target_utilization_rate_bps", target_utilization_rate_bps.to_string())
-        .add_attribute("min_rate", min_rate.to_string())
-        .add_attribute("optimal_rate", optimal_rate.to_string())
-        .add_attribute("max_rate", max_rate.to_string()))
-}
-
-// Existing functions for add_liquidity, deposit, withdraw_interest, withdraw, borrow, repay, and liquidate
-fn add_liquidity(
-    deps: DepsMut,
-    _env: Env,
-    info: MessageInfo,
-) -> ContractResult<Response> {
-    let asset_info: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
-    let collateral_info: CoinConfig = COLLATERAL_CONFIG.load(deps.storage)?;
-
-    // Ensure funds include the required assets and collateral
-    let asset_amount = match info.funds.iter().find(|coin| coin.denom == asset_info.denom) {
-        Some(coin) => coin.amount,
-        None => return Err(ContractError::InvalidFunds { denom: asset_info.denom.clone().to_string() }),
-    };
-
-    let collateral_amount = match info.funds.iter().find(|coin| coin.denom == collateral_info.denom) {
-        Some(coin) => coin.amount,
-        None => return Err(ContractError::InvalidFunds { denom: collateral_info.denom.clone().to_string() }),
-    };
-
-    let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage).unwrap_or(Uint128::zero());
-    let mut total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage).unwrap_or(Uint128::zero());
-
-    // Safely add the amounts to the current totals
-    total_asset_available = total_asset_available.checked_add(asset_amount)
-        .map_err(|_| ContractError::Overflow {})?;
-    total_collateral_available = total_collateral_available.checked_add(collateral_amount)
-        .map_err(|_| ContractError::Overflow {})?;
-
-    TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
-    TOTAL_COLLATERAL_AVAILABLE.save(deps.storage, &total_collateral_available)?;
-
-    Ok(Response::new()
-        .add_attribute("action", "add_liquidity")
-        .add_attribute("total_asset_available", total_asset_available.to_string())
-        .add_attribute("total_collateral_available", total_collateral_available.to_string()))
-}
-
-fn liquidate(
-    deps: DepsMut,
-    _env: Env,
-    info: MessageInfo,
-) -> ContractResult<Response> {
-    let admin = ADMIN.load(deps.storage)?;
-    if info.sender != admin {
-        return Err(ContractError::Unauthorized {});
-    }
-
-    let total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
-    let asset_info: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
-    let total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage)?;
-    let collateral_info: CoinConfig = COLLATERAL_CONFIG.load(deps.storage)?;
-
-    let bank_msg = BankMsg::Send {
-        to_address: admin.to_string(),
-        amount: vec![
-            Coin {
-                denom: asset_info.denom.clone().to_string(),
-                amount: total_asset_available,
-            },
-            Coin {
-                denom: collateral_info.denom.clone().to_string(),
-                amount: total_collateral_available,
-            },
-        ],
-    };
-    Ok(Response::new().add_message(bank_msg))
-}
 
 fn calculate_simple_interest(principal: Uint128, interest_rate: Uint128, time_period: u64) -> Uint128 {
     principal * interest_rate * Uint128::from(time_period) / Uint128::from(NANOSECONDS_IN_YEAR)
@@ -480,7 +310,6 @@ fn calculate_collateral_amount(borowing_amount: Uint128, strike_price: Uint128, 
     (borowing_amount * overcollateralization_factor) / strike_price
 }
 
-
 fn get_time_period(now: Timestamp, time: Timestamp) -> u64 {
     now.seconds() - time.seconds()
 }
@@ -488,7 +317,6 @@ fn get_time_period(now: Timestamp, time: Timestamp) -> u64 {
 // Docs: COMPLETED
 // This function is used to make a deposit from the user's account to th
 // contract account and after that it implements the logic of the deposit
-
 fn execute_deposit(
     deps: DepsMut,
     env: Env,
