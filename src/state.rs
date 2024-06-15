@@ -24,6 +24,7 @@ pub const COLLATERAL_CONFIG: Item<CoinConfig> = Item::new("collateral_config");
 
 pub const TOTAL_ASSET_AVAILABLE: Item<Uint128> = Item::new("total_asset_available");
 pub const TOTAL_COLLATERAL_AVAILABLE: Item<Uint128> = Item::new("total_collateral_available");
+pub const TOTAL_PROTOCOL_EARNINGS: Item<Uint128> = Item::new("total_protocol_earnings");
 
 pub const ADMIN: Item<Addr> = Item::new("admin");
 pub const NANOSECONDS_IN_YEAR: u64 = 365 * 24 * 60 * 60 * 1_000_000_000;

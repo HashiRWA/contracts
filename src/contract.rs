@@ -6,10 +6,9 @@ use cw20_base::allowances::{
     execute_transfer_from, query_allowance,
 };
 use crate::error::{ContractError, ContractResult};
-use crate::msg::{DepositMsg, ExecuteMsg, InstantiateMsg, LoanMsg, QueryMsg, TransactMsg, WithdrawMsg};
+use crate::msg::{DepositMsg, ExecuteMsg, InstantiateMsg, LoanMsg, QueryMsg, RepayMsg, TransactMsg, WithdrawMsg};
 use crate::state::{
-    ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, PRINCIPLE_TO_REPAY, COLLATERAL_SUBMITTED, INTEREST_EARNED, INTEREST_TO_REPAY,
-    NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE,
+    ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, COLLATERAL_SUBMITTED, INTEREST_EARNED, INTEREST_TO_REPAY, NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, PRINCIPLE_TO_REPAY, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE, TOTAL_PROTOCOL_EARNINGS
 };
 use crate::amount::{self, Amount};
 use crate::types::{CoinConfig, PoolConfig};
@@ -65,9 +64,9 @@ pub fn execute(
             TransactMsg::Withdraw (msg) => execute_withdraw(deps, env, info, msg),
             TransactMsg::WithdrawInterest {} => execute_withdraw_interest(deps, env, info),
             TransactMsg::Loan(msg) => execute_loan(deps, env, info, msg),
+            TransactMsg::Repay(msg) => execute_repay(deps, env, info, msg),
 
             TransactMsg::AddLiquidity {} => add_liquidity(deps, env, info),
-            TransactMsg::Repay {} => repay(deps, env, info),
             TransactMsg::Liquidate {} => liquidate(deps, env, info),
         },
         ExecuteMsg::UpdateUserAssetInfo { user_addr } => update_user_asset_info(deps, user_addr),
@@ -207,8 +206,60 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> ContractResult<Binary> {
             let quote = get_repayable_positions(deps, user)?;
             Ok(to_json_binary(&quote)?)
         },
+        QueryMsg::GetRepayQuote{ user} => {
+            let quote = quote_repay(deps, _env, user)?;
+            Ok(to_json_binary(&quote)?)
+        },
     }
 }
+
+
+fn quote_repay(    
+    deps: Deps,
+    env: Env,
+    user: Addr,
+) -> ContractResult<(Uint128, Uint128, Uint128)> {
+    // This nonpayable function ensures that no coins are sent to the contract
+
+    let pool_config: PoolConfig = POOL_CONFIG.load(deps.storage)?;
+    let now = env.block.time.seconds();
+
+    if now > pool_config.maturationdate {
+        return Err(ContractError::CollateralForfeited {});
+    }
+
+    if pool_config.overcollateralizationfactor < Uint128::new(1) {
+        return Err(ContractError::InsufficientOCF {});
+    }
+ 
+    let (overall_collateral_submitted_by_user, last_collateral_time) = COLLATERAL_SUBMITTED.may_load(deps.storage, &user)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+    let (overall_principle_to_repay_by_user, last_principle_time) = PRINCIPLE_TO_REPAY.may_load(deps.storage, &user)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+    let interest_to_repay_by_user_yet = INTEREST_TO_REPAY.may_load(deps.storage, &user)?.unwrap_or(Uint128::zero());
+
+    // TODO: what if somehow - (define) some collateral is left
+    if interest_to_repay_by_user_yet == Uint128::zero() && overall_principle_to_repay_by_user == Uint128::zero() {
+        return Err(ContractError::PositionNotAvailable {});
+    }
+
+    if last_collateral_time != last_principle_time {
+        return Err(ContractError::InvalidState {});
+    }
+
+    let current_time_period = get_time_period(Timestamp::from_seconds(now), last_principle_time);
+    let interest_on_current_principle = calculate_simple_interest(overall_principle_to_repay_by_user, pool_config.debtinterestrate, current_time_period);
+
+    let total_interest_to_pay = interest_to_repay_by_user_yet + interest_on_current_principle;
+    let total_loan_to_repay = overall_principle_to_repay_by_user + total_interest_to_pay;
+    let total_collateral_to_unlock = calculate_collateral_amount(total_loan_to_repay, pool_config.strikeprice, pool_config.overcollateralizationfactor);
+
+    
+    let ret = (total_loan_to_repay, total_interest_to_pay, total_collateral_to_unlock);
+
+    Ok(ret)
+
+}
+  
+
 
 
 // fn quoteDeosit() 
@@ -748,11 +799,25 @@ fn execute_loan(
 
 }
 
-fn repay(
+
+// Just like in borrow there's a transfer of two tokens,
+// here also there's a transfer of two tokens
+// wherein, this time it's reversed,
+// user sends asset sum of principal and interest to the pool 
+// and receives collateral in return
+// Let's assume it to be full repay on the UI level
+// This function is used to repay the loan taken by the user
+
+
+fn execute_repay(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
+    msg : RepayMsg,
 ) -> ContractResult<Response> {
+    // This nonpayable function ensures that no coins are sent to the contract
+    nonpayable(&info);
+
     let pool_config: PoolConfig = POOL_CONFIG.load(deps.storage)?;
     let now = env.block.time.seconds();
 
@@ -760,422 +825,108 @@ fn repay(
         return Err(ContractError::CollateralForfeited {});
     }
 
-    let amount_to_repay = info.funds.iter().find(|coin| coin.denom == pool_config.asset.to_string()).unwrap().amount;
+    if pool_config.overcollateralizationfactor < Uint128::new(1) {
+        return Err(ContractError::InsufficientOCF {});
+    }
 
-    let (collateral_submitted_by_user, last_collateral_time) = COLLATERAL_SUBMITTED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-    let (principle_to_repay_by_user, last_principle_time) = PRINCIPLE_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-    let interest_to_repay_by_user = INTEREST_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
+    let tokens_details: RepayMsg = from_json(&to_json_binary(&msg)?)?;
+    let asset_config: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
+    let collateral_config: CoinConfig = COLLATERAL_CONFIG.load(deps.storage)?;
 
-    if interest_to_repay_by_user == Uint128::zero() && principle_to_repay_by_user == Uint128::zero() {
+    if asset_config.denom != tokens_details.asset_denom {
+        return Err(ContractError::InvalidAsset {});
+    } 
+    if collateral_config.denom != tokens_details.collateral_denom {
+        return Err(ContractError::InvalidCollateral {});
+    }
+
+    let (overall_collateral_submitted_by_user, last_collateral_time) = COLLATERAL_SUBMITTED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+    let (overall_principle_to_repay_by_user, last_principle_time) = PRINCIPLE_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+    let interest_to_repay_by_user_yet = INTEREST_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
+
+    // TODO: what if somehow - (define) some collateral is left
+    if interest_to_repay_by_user_yet == Uint128::zero() && overall_principle_to_repay_by_user == Uint128::zero() {
         return Err(ContractError::PositionNotAvailable {});
     }
 
     if last_collateral_time != last_principle_time {
         return Err(ContractError::InvalidState {});
     }
-    if principle_to_repay_by_user == Uint128::zero() && interest_to_repay_by_user == Uint128::zero() && collateral_submitted_by_user == Uint128::zero() {
-        return Err(ContractError::PositionNotAvailable {});
+
+    let current_time_period = get_time_period(Timestamp::from_seconds(now), last_principle_time);
+    let interest_on_current_principle = calculate_simple_interest(overall_principle_to_repay_by_user, pool_config.debtinterestrate, current_time_period);
+
+    let total_interest_to_pay = interest_to_repay_by_user_yet + interest_on_current_principle;
+    let total_loan_to_repay = overall_principle_to_repay_by_user + total_interest_to_pay;
+    let total_collateral_to_unlock = calculate_collateral_amount(total_loan_to_repay, pool_config.strikeprice, pool_config.overcollateralizationfactor);
+
+    // I am fine with user repaying lesser than they have debt for since it's can also be a partial repayment.
+
+    // checking approval for contract to take user's tokens and making transaction message
+    let allowance_and_expiry: AllowanceResponse = fetch_allowance(
+        deps.as_ref(),
+        env.contract.address.clone(),
+        info.sender.clone(),
+        asset_config.denom.clone(),
+    )?;
+
+    if allowance_and_expiry.expires.is_expired(&env.block) {
+        return Err(ContractError::AllowanceExpired {});
     }
 
-    let time_period = get_time_period(Timestamp::from_seconds(now), last_principle_time);
-    let interest_on_current_principle = calculate_simple_interest(principle_to_repay_by_user, pool_config.debtinterestrate, time_period);
-
-    let strike = pool_config.strikeprice;
-    let current_ocf = pool_config.overcollateralizationfactor;
-
-    if current_ocf < Uint128::new(1) {
-        return Err(ContractError::InsufficientOCF {});
+    let loan_user_is_repaying = tokens_details.asset_principle;
+    let appropriate_collateral_to_unlock = (total_collateral_to_unlock * loan_user_is_repaying) / total_loan_to_repay;
+    let interest_user_has_to_pay = calculate_simple_interest(loan_user_is_repaying, pool_config.debtinterestrate, current_time_period) + interest_to_repay_by_user_yet;
+    
+    if allowance_and_expiry.allowance < loan_user_is_repaying + interest_user_has_to_pay {
+        return Err(ContractError::InsufficientAllowance {});
     }
 
-    let needed_collateral = (amount_to_repay + interest_to_repay_by_user + interest_on_current_principle) * strike * current_ocf;
-    if collateral_submitted_by_user < needed_collateral {
-        return Err(ContractError::InvalidState {});
-    }
-
-    INTEREST_TO_REPAY.save(deps.storage, &info.sender, &Uint128::zero())?;
-
-    PRINCIPLE_TO_REPAY.save(deps.storage, &info.sender, &(principle_to_repay_by_user - amount_to_repay, Timestamp::from_seconds(now)))?;
-    COLLATERAL_SUBMITTED.save(deps.storage, &info.sender, &(collateral_submitted_by_user - needed_collateral, Timestamp::from_seconds(now)))?;
+    INTEREST_TO_REPAY.save(deps.storage, &info.sender, &(total_interest_to_pay - interest_user_has_to_pay))?;
+    PRINCIPLE_TO_REPAY.save(deps.storage, &info.sender, &(overall_principle_to_repay_by_user - loan_user_is_repaying, Timestamp::from_seconds(now)))?;
+    COLLATERAL_SUBMITTED.save(deps.storage, &info.sender, &(overall_collateral_submitted_by_user - appropriate_collateral_to_unlock, Timestamp::from_seconds(now)))?;
 
     let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
-    total_asset_available -= amount_to_repay;
+    total_asset_available -= loan_user_is_repaying;
     TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
 
     let mut total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage)?;
-    total_collateral_available -= needed_collateral;
+    total_collateral_available -= appropriate_collateral_to_unlock;
     TOTAL_COLLATERAL_AVAILABLE.save(deps.storage, &total_collateral_available)?;
 
-    let bank_msg = BankMsg::Send {
-        to_address: info.sender.to_string(),
-        amount: vec![Coin {
-            denom: pool_config.collateral.to_string(),
-            amount: needed_collateral,
-        }],
+    let mut total_protocol_earning = TOTAL_PROTOCOL_EARNINGS.load(deps.storage)?;
+    total_protocol_earning += interest_user_has_to_pay;
+    TOTAL_PROTOCOL_EARNINGS.save(deps.storage, &total_protocol_earning)?;
+
+    // Transfer the tokens
+    let collateral_transfer_request = Cw20ExecuteMsg::Transfer {
+        recipient: info.sender.clone().to_string(),
+        amount: appropriate_collateral_to_unlock,
     };
 
-    Ok(Response::new().add_message(bank_msg))
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cosmwasm_std::{coins, from_binary, Addr, BankMsg, Coin, Empty, Env, MessageInfo, Response, Storage, Uint128};
-    use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-    use cw_multi_test::{App, BankSudo, Contract, ContractWrapper, Executor, SudoMsg};
+    let collateral_msg = SubMsg::new(WasmMsg::Execute {
+        contract_addr: collateral_config.denom.clone().to_string(),
+        msg: to_json_binary(&collateral_transfer_request)?,
+        funds: vec![],
+    });
 
-    // Create a mock contract for testing purposes
-    fn mock_contract() -> Box<dyn Contract<Empty>> {
-        let contract = ContractWrapper::new(
-            crate::contract::execute,
-            crate::contract::instantiate,
-            crate::contract::query,
-        );
-        Box::new(contract)
-    }
+    // Preparing the msg for transferring the funds here.
+    // We need to send this msg to the cw20 contract to transfer funds from the contract's account to this user's account
+    let asset_transfer_request = Cw20ExecuteMsg::TransferFrom  { 
+        owner: info.sender.clone().to_string(),
+        recipient: env.contract.address.clone().to_string(),
+        amount: loan_user_is_repaying + interest_user_has_to_pay
+    };
 
-    fn instantiate_contract(app: &mut App, owner: &str) -> Addr {
-        let contract_id = app.store_code(mock_contract());
-        let msg = InstantiateMsg {
-            admin: owner.to_string(),
-            config: PoolConfig {
-                name: "Test Pool".to_string(),
-                symbol: "TP".to_string(),
-                maturationdate: 1950000000,  
-                debtinterestrate: Uint128::new(5),
-                strikeprice: Uint128::new(2),
-                lendinterestrate: Uint128::new(3),
-                overcollateralizationfactor: Uint128::new(2),
-                asset: Addr::unchecked("asset_token"),
-                collateral: Addr::unchecked("collateral_token"),
-            },
-            oracle: "oracle_address".to_string(),  
-        };
-        let owner_info = mock_info(owner, &[]);
-        let contract_addr = app
-            .instantiate_contract(contract_id, Addr::unchecked(owner), &msg, &[], "Test Contract", None)
-            .unwrap();
-        contract_addr
-    }
+    let asset_msg = SubMsg::new(WasmMsg::Execute {
+        contract_addr: asset_config.denom.clone().to_string(),
+        msg: to_json_binary(&asset_transfer_request)?,
+        funds: vec![],
+    });
 
-    #[test]
-    fn test_instantiate() {
-        let mut app = App::default();
-        let owner = "owner";
-
-        let contract_addr = instantiate_contract(&mut app, owner);
-        let stored_owner: Addr = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetOwner {}).unwrap();
-        
-        assert_eq!(stored_owner, Addr::unchecked(owner));
-    }
-
-    #[test]
-    fn test_add_liquidity() {
-        let mut app = App::default();
-        let owner = "owner";
-        let user = Addr::unchecked("user");
-    
-        let contract_addr = instantiate_contract(&mut app, owner);
-
-        app.sudo(SudoMsg::Bank(BankSudo::Mint {
-            to_address: user.to_string(),
-            amount: vec![
-                Coin {
-                    denom: "asset_token".to_string(),
-                    amount: Uint128::new(10000),
-                },
-                Coin {
-                    denom: "collateral_token".to_string(),
-                    amount: Uint128::new(20000),
-                },
-            ],
-        })).unwrap();
-
-        let initial_asset_balance = app.wrap().query_balance(&user, "asset_token").unwrap();
-        let initial_collateral_balance = app.wrap().query_balance(&user, "collateral_token").unwrap();
-        println!("Initial asset balance: {}", initial_asset_balance.amount);
-        println!("Initial collateral balance: {}", initial_collateral_balance.amount);
-
-        let asset_amount = Uint128::new(1000);
-        let collateral_amount = Uint128::new(2000);
-
-        let msg = ExecuteMsg::Transact(TransactMsg::AddLiquidity {});
-
-        let info = mock_info(user.as_str(), &[
-            Coin { denom: "asset_token".to_string(), amount: asset_amount },
-            Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
-        ]);
-
-        let result = app.execute_contract(user.clone(), contract_addr.clone(), &msg, &info.funds);
-
-        if result.is_err() {
-            println!("Execution failed: {:?}", result.unwrap_err());
-            assert!(false, "Execution should succeed");
-        } else {
-            println!("Execution succeeded: {:?}", result.unwrap());
-        }
-
-        let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
-        let total_collateral_available: Uint128 = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetTotalCollateralAvailable {}).unwrap();
-
-        assert_eq!(total_asset_available, asset_amount);
-        assert_eq!(total_collateral_available, collateral_amount);
-
-        let final_asset_balance = app.wrap().query_balance(&user, "asset_token").unwrap();
-        let final_collateral_balance = app.wrap().query_balance(&user, "collateral_token").unwrap();
-        println!("Final asset balance: {}", final_asset_balance.amount);
-        println!("Final collateral balance: {}", final_collateral_balance.amount);
-
-        assert_eq!(final_asset_balance.amount, Uint128::new(9000));
-        assert_eq!(final_collateral_balance.amount, Uint128::new(18000));
-    }
-
-
-    #[test]
-    fn test_deposit() {
-
-        let mut app = App::default();
-        let owner = "owner";
-        let user = Addr::unchecked("user");
-    
-  
-        app.sudo(SudoMsg::Bank(BankSudo::Mint {
-            to_address: user.to_string(),
-            amount: vec![
-                Coin {
-                    denom: "asset_token".to_string(),
-                    amount: Uint128::new(10000),
-                },
-                Coin {
-                    denom: "collateral_token".to_string(),
-                    amount: Uint128::new(20000),
-                },
-            ],
-        })).unwrap();
-        let contract_addr = instantiate_contract(&mut app, owner);
-
-        let asset_amount = Uint128::new(1000);
-
-        let msg = ExecuteMsg::Transact(TransactMsg::Deposit {});
-
-        let user = "user";
-        let info = mock_info(user, &[
-            Coin { denom: "asset_token".to_string(), amount: asset_amount },
-        ]);
-
-        app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
-
-        let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
-        assert_eq!(total_asset_available, asset_amount);
-
-        let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrinciple { user: user.to_string() }).unwrap();
-        assert_eq!(user_principle.0, asset_amount);
-    }
-
-    #[test]
-    fn test_withdraw() {
-
-        let mut app = App::default();
-        let owner = "owner";
-        let user = Addr::unchecked("user");
-    
-        app.sudo(SudoMsg::Bank(BankSudo::Mint {
-            to_address: user.to_string(),
-            amount: vec![
-                Coin {
-                    denom: "asset_token".to_string(),
-                    amount: Uint128::new(10000),
-                },
-                Coin {
-                    denom: "collateral_token".to_string(),
-                    amount: Uint128::new(20000),
-                },
-            ],
-        })).unwrap();
-        let contract_addr = instantiate_contract(&mut app, owner);
-
-        let asset_amount = Uint128::new(1000);
-        let withdraw_amount = Uint128::new(500);
-
-        let msg = ExecuteMsg::Transact(TransactMsg::Deposit {});
-
-        let user = "user";
-        let info = mock_info(user, &[
-            Coin { denom: "asset_token".to_string(), amount: asset_amount },
-        ]);
-
-        app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
-
-        let msg = ExecuteMsg::Transact(TransactMsg::Withdraw { amount: withdraw_amount });
-
-        app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &[]).unwrap();
-
-        let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
-        assert_eq!(total_asset_available, asset_amount - withdraw_amount);
-
-        let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetUserPrinciple { user: user.to_string() }).unwrap();
-        assert_eq!(user_principle.0, asset_amount - withdraw_amount);
-        let final_asset_balance = app.wrap().query_balance(contract_addr.clone(), "asset_token").unwrap();
-        let final_collateral_balance = app.wrap().query_balance(contract_addr.clone(), "collateral_token").unwrap();
-        assert_eq!(final_asset_balance.amount , withdraw_amount);    
-    }
-
-    #[test]
-    fn test_borrow() {
-        let mut app = App::default();
-        let owner = "owner";
-        let mut app = App::default();
-        let owner = "owner";
-        let mut app = App::default();
-        let owner = "owner";
-        let user = Addr::unchecked("user");
-    
-        let contract_addr = instantiate_contract(&mut app, owner);
-
-        app.sudo(SudoMsg::Bank(BankSudo::Mint {
-            to_address: user.to_string(),
-            amount: vec![
-                Coin {
-                    denom: "asset_token".to_string(),
-                    amount: Uint128::new(10000),
-                },
-                Coin {
-                    denom: "collateral_token".to_string(),
-                    amount: Uint128::new(20000),
-                },
-            ],
-        })).unwrap();
-
-        app.sudo(SudoMsg::Bank(BankSudo::Mint {
-            to_address: owner.to_string(),
-            amount: vec![
-                Coin {
-                    denom: "asset_token".to_string(),
-                    amount: Uint128::new(10000),
-                },
-                Coin {
-                    denom: "collateral_token".to_string(),
-                    amount: Uint128::new(20000),
-                },
-            ],
-        })).unwrap();
-        let contract_addr = instantiate_contract(&mut app, owner);
-
-        let asset_amount = Uint128::new(1000);
-        let collateral_amount = Uint128::new(2000);
-        let borrow_amount = Uint128::new(500);
-
-        let msg = ExecuteMsg::Transact(TransactMsg::AddLiquidity {});
-        app.sudo(SudoMsg::Bank(BankSudo::Mint {
-            to_address: contract_addr.to_string(),
-            amount: vec![
-                Coin {
-                    denom: "asset_token".to_string(),
-                    amount: Uint128::new(10000),
-                },
-                Coin {
-                    denom: "collateral_token".to_string(),
-                    amount: Uint128::new(20000),
-                },
-            ],
-        })).unwrap();
-        let info = mock_info(owner, &[
-            Coin { denom: "asset_token".to_string(), amount: asset_amount },
-            Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
-        ]);
-
-        app.execute_contract(Addr::unchecked(owner), contract_addr.clone(), &msg, &info.funds).unwrap();
-
-        let msg = ExecuteMsg::Transact(TransactMsg::Borrow { amount: borrow_amount });
-
-        let user = "user";
-        let info = mock_info(user, &[
-            Coin { denom: "collateral_token".to_string(), amount: collateral_amount },
-        ]);
-
-        app.execute_contract(Addr::unchecked(user), contract_addr.clone(), &msg, &info.funds).unwrap();
-
-        let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
-        assert_eq!(total_asset_available, asset_amount - borrow_amount);
-
-        let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr, &QueryMsg::GetUserPrincipleToRepay { user: user.to_string() }).unwrap();
-        assert_eq!(user_principle.0, borrow_amount);
-    }
-
-    
-    #[test]
-    fn test_repay() {
-        let mut app = App::default();
-        let owner = "owner";
-        let user = Addr::unchecked("user");
-    
-        let contract_addr = instantiate_contract(&mut app, owner);
-    
-        app.sudo(SudoMsg::Bank(BankSudo::Mint {
-            to_address: user.to_string(),
-            amount: vec![
-                Coin {
-                    denom: "asset_token".to_string(),
-                    amount: Uint128::new(10000),
-                },
-                Coin {
-                    denom: "collateral_token".to_string(),
-                    amount: Uint128::new(20000),
-                },
-            ],
-        })).unwrap();
-    
-        app.sudo(SudoMsg::Bank(BankSudo::Mint {
-            to_address: contract_addr.to_string(),
-            amount: vec![
-                Coin {
-                    denom: "asset_token".to_string(),
-                    amount: Uint128::new(10000),
-                },
-            ],
-        })).unwrap();
-    
-        let add_liquidity_msg = ExecuteMsg::Transact(TransactMsg::AddLiquidity {});
-        let add_liquidity_info = mock_info(user.as_str(), &[
-            Coin { denom: "asset_token".to_string(), amount: Uint128::new(1000) },
-            Coin { denom: "collateral_token".to_string(), amount: Uint128::new(2000) },
-        ]);
-    
-        app.execute_contract(user.clone(), contract_addr.clone(), &add_liquidity_msg, &add_liquidity_info.funds).unwrap();
-    
-        let borrow_amount = Uint128::new(500);
-        let borrow_msg = ExecuteMsg::Transact(TransactMsg::Borrow { amount: borrow_amount });
-        let borrow_info = mock_info(user.as_str(), &[
-            Coin { denom: "collateral_token".to_string(), amount: Uint128::new(2000) },
-        ]);
-    
-        app.execute_contract(user.clone(), contract_addr.clone(), &borrow_msg, &borrow_info.funds).unwrap();
-    
-        let repay_msg = ExecuteMsg::Transact(TransactMsg::Repay {});
-        let repay_info = mock_info(user.as_str(), &[
-            Coin { denom: "asset_token".to_string(), amount: borrow_amount },
-        ]);
-        let contract_asset_balance = app.wrap().query_balance(&contract_addr, "asset_token").unwrap();
-        assert_eq!(contract_asset_balance.amount, Uint128::new(10000 + 1000 -500));
-        let result = app.execute_contract(user.clone(), contract_addr.clone(), &repay_msg, &repay_info.funds);
-    
-        if result.is_err() {
-            println!("Execution failed: {:?}", result.unwrap_err());
-            assert!(false, "Execution should succeed");
-        } else {
-            println!("Execution succeeded: {:?}", result.unwrap());
-        }
-    
-        let user_principle_to_repay: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetUserPrincipleToRepay { user: user.to_string() }).unwrap();
-        assert_eq!(user_principle_to_repay.0, Uint128::zero());
-    
-        let contract_asset_balance = app.wrap().query_balance(&contract_addr, "asset_token").unwrap();
-        assert_eq!(contract_asset_balance.amount, Uint128::new(10000 + 1000 ));
-    
-        let contract_collateral_balance = app.wrap().query_balance(&contract_addr, "collateral_token").unwrap();
-        assert_eq!(contract_collateral_balance.amount, Uint128::new(2000)); 
-    
-        println!("Contract asset balance: {}", contract_asset_balance.amount);
-        println!("Contract collateral balance: {}", contract_collateral_balance.amount);
-    }
-    
+    Ok(Response::new()
+    .add_attribute("action", "repay")
+    .add_submessage(asset_msg)
+    .add_submessage(collateral_msg))    
 
 }

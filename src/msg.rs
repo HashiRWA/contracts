@@ -20,10 +20,12 @@ pub enum TransactMsg {
     Receive(Cw20ReceiveMsg),
     Deposit (DepositMsg),
     Withdraw (WithdrawMsg),
+    Loan (LoanMsg),
+    Repay (RepayMsg),
+
     AddLiquidity {},
     WithdrawInterest {},
-    Loan (LoanMsg),
-    Repay {},
+    
     Liquidate {},
 }
 
@@ -37,6 +39,13 @@ pub struct DepositMsg {
 pub struct WithdrawMsg {
     pub denom : Addr,
     pub amount: Uint128,
+}
+
+#[cw_serde]
+pub struct RepayMsg {
+    pub asset_denom : Addr,
+    pub asset_principle: Uint128,
+    pub collateral_denom : Addr,
 }
 
 #[cw_serde]
@@ -106,6 +115,10 @@ pub enum QueryMsg {
 
     GetRepayablePositions {
         user: Addr,
+    },
+
+    GetRepayQuote {
+        user:Addr
     },
 
 }
