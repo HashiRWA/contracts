@@ -61,7 +61,9 @@ pub enum ExecuteMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum QueryMsg {
-    AllDetails {
+    AllDetails {},
+
+    UserDetails {
         user: Addr
     },
 

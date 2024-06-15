@@ -100,24 +100,29 @@ pub fn fetch_allowance(
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> ContractResult<Binary> {
     match msg {
-        QueryMsg::AllDetails {user} => {
+        QueryMsg::AllDetails {} => {
             let pool_config = POOL_CONFIG.load(deps.storage)?;
             let admin = ADMIN.load(deps.storage)?;
             let total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
             let total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage)?;
-            let user_clone = user.clone();
-            
-            let withdrawable_positions = get_withdrawable_positions(deps, user_clone)?;
-            let repayable_positions = get_repayable_positions(deps, user)?;
-
             let all_details = (
                 pool_config, admin, total_asset_available,
                 total_collateral_available,
+            );
+           
+            Ok(to_json_binary(&all_details)?)
+        },
+
+        QueryMsg::UserDetails {user} => {
+            let user_clone = user.clone();
+            let withdrawable_positions = get_withdrawable_positions(deps, user_clone)?;
+            let repayable_positions = get_repayable_positions(deps, user)?;
+            let all_details = (
                 withdrawable_positions,
                 repayable_positions
             );
             Ok(to_json_binary(&all_details)?)
-        },
+        }
 
         QueryMsg::GetDepositQuote { user, amount } => {
             let quote = quote_deposit(deps, user,  amount)?;

@@ -1,1 +1,1 @@
-6ec400b1b56d0ec7e076faf940656f8bfc95b327c11f4181af1f983f90099949  hashirwa_contracts.wasm
+5c68496f5fb7254d62dc62e4c2b9a6148b365a33a45861f0738b69ae9eeeafda  hashirwa_contracts.wasm
