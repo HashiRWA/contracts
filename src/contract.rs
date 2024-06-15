@@ -8,7 +8,7 @@ use cw20_base::allowances::{
 use crate::error::{ContractError, ContractResult};
 use crate::msg::{DepositMsg, ExecuteMsg, InstantiateMsg, LoanMsg, QueryMsg, RepayMsg, TransactMsg, WithdrawMsg};
 use crate::state::{
-    ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, COLLATERAL_SUBMITTED, INTEREST_EARNED, INTEREST_TO_REPAY, NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, PRINCIPLE_TO_REPAY, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE, TOTAL_PROTOCOL_EARNINGS
+    ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, COLLATERAL_SUBMITTED, INTEREST_EARNED, INTEREST_TO_REPAY, NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, PRINCIPLE_TO_REPAY, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE
 };
 use crate::amount::{self, Amount};
 use crate::types::{CoinConfig, PoolConfig};
@@ -249,11 +249,8 @@ fn quote_repay(
     let interest_on_current_principle = calculate_simple_interest(overall_principle_to_repay_by_user, pool_config.debtinterestrate, current_time_period);
 
     let total_interest_to_pay = interest_to_repay_by_user_yet + interest_on_current_principle;
-    let total_loan_to_repay = overall_principle_to_repay_by_user + total_interest_to_pay;
-    let total_collateral_to_unlock = calculate_collateral_amount(total_loan_to_repay, pool_config.strikeprice, pool_config.overcollateralizationfactor);
-
     
-    let ret = (total_loan_to_repay, total_interest_to_pay, total_collateral_to_unlock);
+    let ret = (overall_principle_to_repay_by_user, total_interest_to_pay, overall_collateral_submitted_by_user);
 
     Ok(ret)
 
@@ -857,8 +854,7 @@ fn execute_repay(
     let interest_on_current_principle = calculate_simple_interest(overall_principle_to_repay_by_user, pool_config.debtinterestrate, current_time_period);
 
     let total_interest_to_pay = interest_to_repay_by_user_yet + interest_on_current_principle;
-    let total_loan_to_repay = overall_principle_to_repay_by_user + total_interest_to_pay;
-    let total_collateral_to_unlock = calculate_collateral_amount(total_loan_to_repay, pool_config.strikeprice, pool_config.overcollateralizationfactor);
+    let total_collateral_to_unlock = calculate_collateral_amount(overall_principle_to_repay_by_user, pool_config.strikeprice, pool_config.overcollateralizationfactor);
 
     // I am fine with user repaying lesser than they have debt for since it's can also be a partial repayment.
 
@@ -875,29 +871,30 @@ fn execute_repay(
     }
 
     let loan_user_is_repaying = tokens_details.asset_principle;
-    let appropriate_collateral_to_unlock = (total_collateral_to_unlock * loan_user_is_repaying) / total_loan_to_repay;
+    let appropriate_collateral_to_unlock = (total_collateral_to_unlock * loan_user_is_repaying) / overall_principle_to_repay_by_user;
     let interest_user_has_to_pay = calculate_simple_interest(loan_user_is_repaying, pool_config.debtinterestrate, current_time_period) + interest_to_repay_by_user_yet;
     
     if allowance_and_expiry.allowance < loan_user_is_repaying + interest_user_has_to_pay {
         return Err(ContractError::InsufficientAllowance {});
     }
 
-    INTEREST_TO_REPAY.save(deps.storage, &info.sender, &(total_interest_to_pay - interest_user_has_to_pay))?;
-    PRINCIPLE_TO_REPAY.save(deps.storage, &info.sender, &(overall_principle_to_repay_by_user - loan_user_is_repaying, Timestamp::from_seconds(now)))?;
-    COLLATERAL_SUBMITTED.save(deps.storage, &info.sender, &(overall_collateral_submitted_by_user - appropriate_collateral_to_unlock, Timestamp::from_seconds(now)))?;
+    let i_t_r = total_interest_to_pay - interest_user_has_to_pay;
+    let p_t_r =overall_principle_to_repay_by_user - loan_user_is_repaying;
+    let c_s = overall_collateral_submitted_by_user - appropriate_collateral_to_unlock;
+
+    INTEREST_TO_REPAY.save(deps.storage, &info.sender, &i_t_r)?;
+    PRINCIPLE_TO_REPAY.save(deps.storage, &info.sender, &(p_t_r, Timestamp::from_seconds(now)))?;
+    COLLATERAL_SUBMITTED.save(deps.storage, &info.sender, &(c_s, Timestamp::from_seconds(now)))?;
 
     let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
-    total_asset_available -= loan_user_is_repaying;
+    total_asset_available += loan_user_is_repaying + interest_user_has_to_pay;
     TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
 
-    let mut total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage)?;
-    total_collateral_available -= appropriate_collateral_to_unlock;
-    TOTAL_COLLATERAL_AVAILABLE.save(deps.storage, &total_collateral_available)?;
+    let total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage)?;
+    let t_c_a = total_collateral_available - appropriate_collateral_to_unlock;
+    TOTAL_COLLATERAL_AVAILABLE.save(deps.storage, &t_c_a)?;
 
-    let mut total_protocol_earning = TOTAL_PROTOCOL_EARNINGS.load(deps.storage)?;
-    total_protocol_earning += interest_user_has_to_pay;
-    TOTAL_PROTOCOL_EARNINGS.save(deps.storage, &total_protocol_earning)?;
-
+  
     // Transfer the tokens
     let collateral_transfer_request = Cw20ExecuteMsg::Transfer {
         recipient: info.sender.clone().to_string(),
@@ -910,12 +907,14 @@ fn execute_repay(
         funds: vec![],
     });
 
+    let x = loan_user_is_repaying + interest_user_has_to_pay;
+
     // Preparing the msg for transferring the funds here.
     // We need to send this msg to the cw20 contract to transfer funds from the contract's account to this user's account
     let asset_transfer_request = Cw20ExecuteMsg::TransferFrom  { 
         owner: info.sender.clone().to_string(),
         recipient: env.contract.address.clone().to_string(),
-        amount: loan_user_is_repaying + interest_user_has_to_pay
+        amount: x
     };
 
     let asset_msg = SubMsg::new(WasmMsg::Execute {
