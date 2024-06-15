@@ -6,7 +6,7 @@ use cw20_base::allowances::{
     execute_transfer_from, query_allowance,
 };
 use crate::error::{ContractError, ContractResult};
-use crate::msg::{DepositMsg, ExecuteMsg, InstantiateMsg, QueryMsg, TransactMsg, WithdrawMsg};
+use crate::msg::{DepositMsg, ExecuteMsg, InstantiateMsg, LoanMsg, QueryMsg, TransactMsg, WithdrawMsg};
 use crate::state::{
     ADMIN, ASSET_CONFIG, COLLATERAL_CONFIG, PRINCIPLE_TO_REPAY, COLLATERAL_SUBMITTED, INTEREST_EARNED, INTEREST_TO_REPAY,
     NANOSECONDS_IN_YEAR, POOL_CONFIG, PRINCIPLE_DEPLOYED, TOTAL_ASSET_AVAILABLE, TOTAL_COLLATERAL_AVAILABLE,
@@ -64,9 +64,9 @@ pub fn execute(
             TransactMsg::Deposit(msg) => execute_deposit(deps, env, info, msg),
             TransactMsg::Withdraw (msg) => execute_withdraw(deps, env, info, msg),
             TransactMsg::WithdrawInterest {} => execute_withdraw_interest(deps, env, info),
+            TransactMsg::Loan(msg) => execute_loan(deps, env, info, msg),
 
             TransactMsg::AddLiquidity {} => add_liquidity(deps, env, info),
-            TransactMsg::Borrow { amount } => borrow(deps, env, info, amount),
             TransactMsg::Repay {} => repay(deps, env, info),
             TransactMsg::Liquidate {} => liquidate(deps, env, info),
         },
@@ -194,8 +194,8 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> ContractResult<Binary> {
             Ok(to_json_binary(&quote)?)
         },
 
-        QueryMsg::GetLoanQuote { user, amount} => {
-            let quote = quote_loan(deps, user, amount)?;
+        QueryMsg::GetLoanQuote { amount} => {
+            let quote = quote_loan(deps, _env, amount)?;
             Ok(to_json_binary(&quote)?)
         },
         
@@ -259,32 +259,25 @@ fn quote_deposit(
   
   fn quote_loan(
     deps: Deps,
-    user:Addr,
+    env: Env,
     amount: Uint128,
-  ) -> ContractResult<((Uint128, Uint128, Uint128),(Uint128, Uint128, Uint128))> {
+  ) -> ContractResult<(Uint128, Uint128, Uint128)> {
     let pool_config = POOL_CONFIG.load(deps.storage)?;
   
-    let interest_to_repay_by_user = INTEREST_TO_REPAY.may_load(deps.storage, &user)?.unwrap_or(Uint128::zero());
-    let principle_to_repay_by_user = PRINCIPLE_TO_REPAY.may_load(deps.storage, &user)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-    let collateral_submitted_by_user = COLLATERAL_SUBMITTED.may_load(deps.storage, &user)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-  
-    let time_period = get_time_period(Timestamp::from_seconds(pool_config.maturationdate), principle_to_repay_by_user.1);
-  
-    // without the current position
+    // Don't quote if the pool has expired
+    let now = env.block.time.seconds();
+    if now > pool_config.maturationdate {
+      return Err(ContractError::PoolMatured {});
+    }
+    // without the previous position
     // at maturity
+    
+    let quotation_to_maturity_time_period = get_time_period(Timestamp::from_seconds(pool_config.maturationdate), Timestamp::from_seconds(now));
+    let interest = calculate_simple_interest(amount, pool_config.debtinterestrate, quotation_to_maturity_time_period);
+    let collateral_for_given_position = calculate_collateral_amount(amount, pool_config.strikeprice, pool_config.overcollateralizationfactor);
+    let user_position_for_new_amount = (amount, interest, collateral_for_given_position);
   
-    let interest = calculate_simple_interest(principle_to_repay_by_user.0, pool_config.debtinterestrate, time_period);
-    let user_position_without_new_amount = (principle_to_repay_by_user.0, interest_to_repay_by_user + interest, collateral_submitted_by_user.0);
-  
-    // with the current position
-    // at maturity
-  
-    let interest = calculate_simple_interest(principle_to_repay_by_user.0 + amount, pool_config.debtinterestrate, time_period);
-    let new_collateral = pool_config.overcollateralizationfactor * pool_config.strikeprice * amount;
-    let user_position_with_new_amount = (principle_to_repay_by_user.0 + amount, interest_to_repay_by_user + interest, collateral_submitted_by_user.0 + new_collateral);
-  
-    Ok((user_position_without_new_amount, user_position_with_new_amount))
-
+    Ok(user_position_for_new_amount)
   }
   
   // fn getWithdrawablePositions()
@@ -434,6 +427,11 @@ fn liquidate(
 fn calculate_simple_interest(principal: Uint128, interest_rate: Uint128, time_period: u64) -> Uint128 {
     principal * interest_rate * Uint128::from(time_period) / Uint128::from(NANOSECONDS_IN_YEAR)
 }
+
+fn calculate_collateral_amount(borowing_amount: Uint128, strike_price: Uint128, overcollateralization_factor: Uint128) -> Uint128 {
+    (borowing_amount * overcollateralization_factor) / strike_price
+}
+
 
 fn get_time_period(now: Timestamp, time: Timestamp) -> u64 {
     now.seconds() - time.seconds()
@@ -627,12 +625,15 @@ fn execute_withdraw_interest(
     .add_submessage(msg))
 }
 
-fn borrow(
+fn execute_loan(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    amount: Uint128,
-) -> ContractResult<Response> {
+    msg: LoanMsg,
+) -> Result<Response, ContractError> {
+    // This nonpayable function ensures that no coins are sent to the contract
+    nonpayable(&info);
+
     let pool_config: PoolConfig = POOL_CONFIG.load(deps.storage)?;
     let now = env.block.time.seconds();
 
@@ -640,68 +641,111 @@ fn borrow(
         return Err(ContractError::PoolMatured {});
     }
 
-    let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
-    if total_asset_available < amount {
-        return Err(ContractError::InsufficientFunds {});
+    if pool_config.overcollateralizationfactor < Uint128::new(1) {
+        return Err(ContractError::InsufficientOCF {});
     }
 
+    let tokens_details: LoanMsg = from_json(&to_json_binary(&msg)?)?;
     let asset_config: CoinConfig = ASSET_CONFIG.load(deps.storage)?;
     let collateral_config: CoinConfig = COLLATERAL_CONFIG.load(deps.storage)?;
 
-    let (collateral_submitted_by_user, last_collateral_time) = COLLATERAL_SUBMITTED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-    let (principle_to_repay_by_user, last_principle_time) = PRINCIPLE_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
-    let interest_to_repay_by_user = INTEREST_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
+    if asset_config.denom != tokens_details.asset_denom {
+        return Err(ContractError::InvalidAsset {});
+    } 
+    if collateral_config.denom != tokens_details.collateral_denom {
+        return Err(ContractError::InvalidCollateral {});
+    }
+
+    let mut total_asset_available = TOTAL_ASSET_AVAILABLE.load(deps.storage)?;
+    if total_asset_available < tokens_details.asset_amount {
+        return Err(ContractError::InsufficientFunds {});
+    }
+
+    // This contract needs to check if the user has given enough allowance to this contract to transfer funds from collateral cw20 token
+    // collateral config is the configuration of the collateral that the user wants to stake
+    // check with collateral cw20 if user has given allowance to this contract to transfer funds
+    let allowance_and_expiry: AllowanceResponse = fetch_allowance(
+        deps.as_ref(),
+        env.contract.address.clone(),
+        info.sender.clone(),
+        collateral_config.denom.clone(),
+    )?;
+
+    // calculate the needful
+
+    let (overall_collateral_submitted_by_user, last_collateral_time) = COLLATERAL_SUBMITTED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+    let (overall_principle_to_repay_by_user, last_principle_time) = PRINCIPLE_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
+    let overall_interest_to_repay_by_user = INTEREST_TO_REPAY.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
 
     if last_collateral_time != last_principle_time {
         return Err(ContractError::InvalidState {});
     }
-    // if principle_to_repay_by_user == Uint128::zero() && interest_to_repay_by_user == Uint128::zero(){
-    //     return Err(ContractError::PositionNotAvailable {});
-    // } 
-    // first time users cant borrow if this check is in place 
 
-    let collateral_amount_sent = info.funds.iter().find(|coin| coin.denom == collateral_config.denom).unwrap().amount;
-    let strike = pool_config.strikeprice;
-    let current_ocf = pool_config.overcollateralizationfactor;
+    // calculate the collateral needed for current loan
 
-    if current_ocf < Uint128::new(1) {
-        return Err(ContractError::InsufficientOCF {});
+    let new_collateral_needed = calculate_collateral_amount(tokens_details.asset_amount, pool_config.strikeprice, pool_config.overcollateralizationfactor);
+
+    // check if the user has approved collateral_needed amount
+
+    if allowance_and_expiry.allowance < new_collateral_needed {
+        return Err(ContractError::InsufficientAllowance {});
+    }
+    if allowance_and_expiry.expires.is_expired(&env.block) {
+        return Err(ContractError::AllowanceExpired {});
     }
 
-    let needed_collateral = amount * strike * current_ocf;
-    if collateral_amount_sent < needed_collateral {
-        return Err(ContractError::InsufficientCollateral {});
-    }
+    // calculating new position interest
 
-    let time_period = get_time_period(Timestamp::from_seconds(now), last_principle_time);
-    let interest_on_current_principle = calculate_simple_interest(principle_to_repay_by_user, pool_config.debtinterestrate, time_period);
+    let old_time_period = get_time_period(Timestamp::from_seconds(now), last_principle_time);
+    let interest_on_old_principle = calculate_simple_interest(overall_principle_to_repay_by_user, pool_config.debtinterestrate, old_time_period);
+    
+    INTEREST_TO_REPAY.save(deps.storage, &info.sender, &(overall_interest_to_repay_by_user + interest_on_old_principle))?;
+    PRINCIPLE_TO_REPAY.save(deps.storage, &info.sender, &(overall_principle_to_repay_by_user + tokens_details.asset_amount, Timestamp::from_seconds(now)))?;
+    COLLATERAL_SUBMITTED.save(deps.storage, &info.sender, &(overall_collateral_submitted_by_user + new_collateral_needed, Timestamp::from_seconds(now)))?;
 
-    INTEREST_TO_REPAY.save(deps.storage, &info.sender, &(interest_to_repay_by_user + interest_on_current_principle))?;
-    PRINCIPLE_TO_REPAY.save(deps.storage, &info.sender, &(principle_to_repay_by_user + amount, Timestamp::from_seconds(now)))?;
-    COLLATERAL_SUBMITTED.save(deps.storage, &info.sender, &(collateral_submitted_by_user + needed_collateral, Timestamp::from_seconds(now)))?;
-
-    total_asset_available -= amount;
+    total_asset_available -= tokens_details.asset_amount;
     TOTAL_ASSET_AVAILABLE.save(deps.storage, &total_asset_available)?;
 
     let mut total_collateral_available = TOTAL_COLLATERAL_AVAILABLE.load(deps.storage)?;
-    total_collateral_available += needed_collateral;
+    total_collateral_available += new_collateral_needed;
     TOTAL_COLLATERAL_AVAILABLE.save(deps.storage, &total_collateral_available)?;
 
-    let bank_msg = BankMsg::Send {
-        to_address: info.sender.to_string(),
-        amount: vec![
-            Coin {
-                denom: asset_config.denom.clone().to_string(),
-                amount,
-            },
-            Coin {
-                denom: collateral_config.denom.clone().to_string(),
-                amount: collateral_amount_sent - needed_collateral,
-            },
-        ],
+    // Now we need to firstly transfer the collateral from the user's account to the contract account
+    // then we need to transfer the asset from the contract account to the user's account
+
+    // Preparing the msg for transferring the funds here.
+    // Using Transfer since contract's account is to be used by contract itself
+    // We need to send this msg to the cw20 contract to transfer funds from the user's account to this contract account
+    let collateral_transfer_request = Cw20ExecuteMsg::TransferFrom {
+        owner: info.sender.clone().to_string(),
+        recipient: env.contract.address.clone().to_string(),
+        amount: new_collateral_needed,
     };
 
-    Ok(Response::new().add_message(bank_msg))
+    let collateral_msg = SubMsg::new(WasmMsg::Execute {
+        contract_addr: collateral_config.denom.clone().to_string(),
+        msg: to_json_binary(&collateral_transfer_request)?,
+        funds: vec![],
+    });
+
+    // Preparing the msg for transferring the funds here.
+    // We need to send this msg to the cw20 contract to transfer funds from the contract's account to this user's account
+    let asset_transfer_request = Cw20ExecuteMsg::Transfer {
+        recipient: info.sender.clone().to_string(),
+        amount: tokens_details.asset_amount,
+    };
+
+    let asset_msg = SubMsg::new(WasmMsg::Execute {
+        contract_addr: asset_config.denom.clone().to_string(),
+        msg: to_json_binary(&asset_transfer_request)?,
+        funds: vec![],
+    });
+
+    Ok(Response::new()
+    .add_attribute("action", "loan")
+    .add_submessage(collateral_msg)
+    .add_submessage(asset_msg))
+
 }
 
 fn repay(

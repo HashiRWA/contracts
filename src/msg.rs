@@ -22,9 +22,7 @@ pub enum TransactMsg {
     Withdraw (WithdrawMsg),
     AddLiquidity {},
     WithdrawInterest {},
-    Borrow {
-        amount: Uint128,
-    },
+    Loan (LoanMsg),
     Repay {},
     Liquidate {},
 }
@@ -39,6 +37,13 @@ pub struct DepositMsg {
 pub struct WithdrawMsg {
     pub denom : Addr,
     pub amount: Uint128,
+}
+
+#[cw_serde]
+pub struct LoanMsg {
+    pub asset_denom : Addr,
+    pub asset_amount: Uint128,
+    pub collateral_denom : Addr,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -96,7 +101,6 @@ pub enum QueryMsg {
     },
 
     GetLoanQuote {
-        user: Addr,
         amount: Uint128,
     },
 
