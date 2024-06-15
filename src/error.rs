@@ -1,6 +1,6 @@
-use cosmwasm_std::{StdError};
+use cosmwasm_std::{StdError, Timestamp};
 use thiserror::Error;
-
+use cosmwasm_std::Uint128;
 #[derive(Error, Debug, PartialEq)]
 pub enum ContractError {
     #[error("{0}")]
@@ -10,7 +10,8 @@ pub enum ContractError {
     Unauthorized {},
     #[error("InvalidFunds")]
     InvalidFunds {denom : String},
-
+    #[error("Lock in time period is still active ")]
+    LockinTimePeriodActive {last_time : Timestamp , now : u64 , maturation_date : u64 },
 
     #[error("Pool has matured, cannot perform this operation")]
     PoolMatured {},

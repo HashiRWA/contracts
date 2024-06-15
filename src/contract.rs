@@ -1,3 +1,5 @@
+use std::process::Command;
+
 use cosmwasm_std::{
     entry_point, Addr, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, QueryRequest, Response, Timestamp, Uint128
 };
@@ -10,6 +12,7 @@ use crate::state::{
 use crate::types::{CoinConfig, PoolConfig};
 use cosmwasm_std::to_json_binary;
 use cosmwasm_std::to_binary;
+use cosmwasm_std::Uint64;
 #[entry_point]
 pub fn instantiate(
     deps: DepsMut,
@@ -408,7 +411,7 @@ fn deposit(
     let interest_since_last_deposit = calculate_simple_interest(principle_deployed.0, pool_config.lendinterestrate, time_period);
 
     let principle_to_deposit = info.funds.iter().find(|coin| coin.denom == asset_config.denom).unwrap().amount;
-
+    
     INTEREST_EARNED.save(deps.storage, &info.sender, &(interest_earned_by_user + interest_since_last_deposit))?;
     PRINCIPLE_DEPLOYED.save(deps.storage, &info.sender, &(principle_deployed.0 + principle_to_deposit, Timestamp::from_seconds(now)))?;
 
@@ -418,7 +421,6 @@ fn deposit(
 
     Ok(Response::default())
 }
-
 fn withdraw(
     deps: DepsMut,
     env: Env,
@@ -432,7 +434,19 @@ fn withdraw(
     let (principle_deployed, last_deposit_time) = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
     let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
 
-    if principle_deployed == Uint128::zero() {
+    // Debugging prints
+    println!("Debug: Current time: {}", now);
+    println!("Debug: Pool maturation date: {}", pool_config.maturationdate);
+    println!("Debug: Last deposit time: {}", last_deposit_time.seconds());
+    println!("Debug: Lock-in period: {}", pool_config.lock_in_period);
+
+    // Calculate the lock-in period end time
+    let lock_in_period_end = last_deposit_time.plus_seconds((pool_config.lock_in_period.u128() * ((pool_config.maturationdate - last_deposit_time.seconds() ) as u128) / 100) as u64).seconds();
+
+    if now < lock_in_period_end {
+        println!("Debug: Lock-in period active. Cannot withdraw.");
+        return Err(ContractError::LockinTimePeriodActive { last_time: last_deposit_time, now, maturation_date: pool_config.maturationdate });
+    } else if principle_deployed == Uint128::zero() {
         return Err(ContractError::PositionNotAvailable {});
     } else if principle_deployed < amount {
         return Err(ContractError::InsufficientFunds {});
@@ -458,6 +472,7 @@ fn withdraw(
 
     Ok(Response::default().add_message(bank_msg))
 }
+
 
 fn withdraw_interest(
     deps: DepsMut,
@@ -646,13 +661,14 @@ mod tests {
             config: PoolConfig {
                 name: "Test Pool".to_string(),
                 symbol: "TP".to_string(),
-                maturationdate: 1950000000,  
+                maturationdate: 1574797419,  
                 debtinterestrate: Uint128::new(5),
                 strikeprice: Uint128::new(2),
                 lendinterestrate: Uint128::new(3),
                 overcollateralizationfactor: Uint128::new(2),
                 asset: Addr::unchecked("asset_token"),
                 collateral: Addr::unchecked("collateral_token"),
+                lock_in_period : Uint128::new(1)
             },
             oracle: "oracle_address".to_string(),  
         };
@@ -778,7 +794,7 @@ mod tests {
     }
 
     #[test]
-    fn test_withdraw() {
+    fn test_withdraw_fail() {
 
         let mut app = App::default();
         let owner = "owner";
@@ -825,6 +841,55 @@ mod tests {
         assert_eq!(final_asset_balance.amount , withdraw_amount);    
     }
 
+    #[test]
+    fn test_withdraw() {
+        let mut app = App::default();
+        let owner = "owner";
+        let user = Addr::unchecked("user");
+    
+        // Mint initial tokens to the user
+        app.sudo(SudoMsg::Bank(BankSudo::Mint {
+            to_address: user.to_string(),
+            amount: vec![
+                Coin {
+                    denom: "asset_token".to_string(),
+                    amount: Uint128::new(10000),
+                },
+                Coin {
+                    denom: "collateral_token".to_string(),
+                    amount: Uint128::new(20000),
+                },
+            ],
+        })).unwrap();
+    
+        let contract_addr = instantiate_contract(&mut app, owner);
+    
+        let asset_amount = Uint128::new(1000);
+        let msg = ExecuteMsg::Transact(TransactMsg::Deposit {});
+        let info = mock_info("user", &[Coin { denom: "asset_token".to_string(), amount: asset_amount }]);
+        app.execute_contract(user.clone(), contract_addr.clone(), &msg, &info.funds).unwrap();
+    
+        app.update_block(|block| {
+            block.time = block.time.plus_seconds(40000); 
+        });
+    
+        let withdraw_amount = Uint128::new(500);
+        let msg = ExecuteMsg::Transact(TransactMsg::Withdraw { amount: withdraw_amount });
+        app.execute_contract(user.clone(), contract_addr.clone(), &msg, &[]).unwrap();
+    
+        let total_asset_available: Uint128 = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetTotalAssetAvailable {}).unwrap();
+        assert_eq!(total_asset_available, asset_amount - withdraw_amount);
+    
+        let user_principle: (Uint128, Timestamp) = app.wrap().query_wasm_smart(contract_addr.clone(), &QueryMsg::GetUserPrinciple { user: user.to_string() }).unwrap();
+        assert_eq!(user_principle.0, asset_amount - withdraw_amount);
+    
+        let final_asset_balance = app.wrap().query_balance(contract_addr.clone(), "asset_token").unwrap();
+        assert_eq!(final_asset_balance.amount, withdraw_amount);
+    
+ 
+    }
+    
+        
     #[test]
     fn test_borrow() {
         let mut app = App::default();
