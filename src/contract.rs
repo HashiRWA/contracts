@@ -433,18 +433,11 @@ fn withdraw(
 
     let (principle_deployed, last_deposit_time) = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
     let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
-
-    // Debugging prints
-    println!("Debug: Current time: {}", now);
-    println!("Debug: Pool maturation date: {}", pool_config.maturationdate);
-    println!("Debug: Last deposit time: {}", last_deposit_time.seconds());
-    println!("Debug: Lock-in period: {}", pool_config.lock_in_period);
-
+    
     // Calculate the lock-in period end time
     let lock_in_period_end = last_deposit_time.plus_seconds((pool_config.lock_in_period.u128() * ((pool_config.maturationdate - last_deposit_time.seconds() ) as u128) / 100) as u64).seconds();
 
     if now < lock_in_period_end {
-        println!("Debug: Lock-in period active. Cannot withdraw.");
         return Err(ContractError::LockinTimePeriodActive { last_time: last_deposit_time, now, maturation_date: pool_config.maturationdate });
     } else if principle_deployed == Uint128::zero() {
         return Err(ContractError::PositionNotAvailable {});
