@@ -1,1 +1,1 @@
-a646675d67575f0df02d709d9d711697ed1536eb41930b0fc7e17a696842976b  ./target/wasm32-unknown-unknown/release/hashirwa_contracts.wasm
+1b3d9782e744b0edaeb34ac2f1d49aec1fc4a3fbf8c01994e1dbbfefa20dc284  ./target/wasm32-unknown-unknown/release/hashirwa_contracts.wasm
