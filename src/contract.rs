@@ -434,7 +434,11 @@ fn execute_withdraw(
     let (principle_deployed, last_deposit_time) = PRINCIPLE_DEPLOYED.may_load(deps.storage, &info.sender)?.unwrap_or((Uint128::zero(), Timestamp::from_seconds(0)));
     let interest_earned_by_user = INTEREST_EARNED.may_load(deps.storage, &info.sender)?.unwrap_or(Uint128::zero());
 
-    if principle_deployed == Uint128::zero() {
+    let lock_in_period_end = last_deposit_time.plus_seconds((pool_config.lock_in_period.u128() * ((pool_config.maturationdate - last_deposit_time.seconds() ) as u128) / 100) as u64).seconds();
+
+    if now < lock_in_period_end {
+        return Err(ContractError::LockinTimePeriodActive {});
+    } else if principle_deployed == Uint128::zero() {
         return Err(ContractError::PositionNotAvailable {});
     } else if principle_deployed < withdraw_amount {
         return Err(ContractError::InsufficientFunds {});

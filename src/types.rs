@@ -15,6 +15,7 @@ pub struct PoolConfig {
     pub overcollateralizationfactor: Uint128, 
     pub asset: Addr,
     pub collateral: Addr,
+    pub lock_in_period : Uint128 , 
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]

@@ -18,6 +18,9 @@ pub enum ContractError {
     #[error("Bank Contract : Unauthorized")]
     Unauthorized {},
 
+    #[error("Lock in time period is still active ")]
+    LockinTimePeriodActive {},
+
     #[error("Bank Contract: Allowance Expired")]
     AllowanceExpired {},
 
